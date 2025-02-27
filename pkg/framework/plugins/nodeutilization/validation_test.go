@@ -22,6 +22,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/descheduler/pkg/api"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/thresholds"
 )
 
 func TestValidateLowNodeUtilizationPluginConfig(t *testing.T) {
@@ -43,7 +44,7 @@ func TestValidateLowNodeUtilizationPluginConfig(t *testing.T) {
 				v1.ResourceMemory: 80,
 			},
 			errInfo: fmt.Errorf("thresholds config is not valid: %v", fmt.Errorf(
-				"%v threshold not in [%v, %v] range", v1.ResourceMemory, MinResourcePercentage, MaxResourcePercentage)),
+				"%v threshold not in [%v, %v] range", v1.ResourceMemory, thresholds.MinResourcePercentage, thresholds.MaxResourcePercentage)),
 		},
 		{
 			name: "thresholds and targetThresholds configured different num of resources",

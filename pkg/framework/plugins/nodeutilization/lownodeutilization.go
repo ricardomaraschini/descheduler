@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/thresholds"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/usageclients"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 )
 
@@ -44,7 +46,7 @@ type LowNodeUtilization struct {
 	underutilizationCriteria []interface{}
 	overutilizationCriteria  []interface{}
 	resourceNames            []v1.ResourceName
-	usageClient              usageClient
+	usageClient              usageclients.Interface
 }
 
 var _ frameworktypes.BalancePlugin = &LowNodeUtilization{}
@@ -59,11 +61,11 @@ func NewLowNodeUtilization(args runtime.Object, handle frameworktypes.Handle) (f
 	if lowNodeUtilizationArgsArgs.MetricsUtilization.Prometheus.Query != "" {
 		uResourceNames := getResourceNames(lowNodeUtilizationArgsArgs.Thresholds)
 		oResourceNames := getResourceNames(lowNodeUtilizationArgsArgs.TargetThresholds)
-		if len(uResourceNames) != 1 || uResourceNames[0] != ResourceMetrics {
-			return nil, fmt.Errorf("thresholds are expected to specify a single instance of %q resource, got %v instead", ResourceMetrics, uResourceNames)
+		if len(uResourceNames) != 1 || uResourceNames[0] != usageclients.MetricResource {
+			return nil, fmt.Errorf("thresholds are expected to specify a single instance of %q resource, got %v instead", usageclients.MetricResource, uResourceNames)
 		}
-		if len(oResourceNames) != 1 || oResourceNames[0] != ResourceMetrics {
-			return nil, fmt.Errorf("targetThresholds are expected to specify a single instance of %q resource, got %v instead", ResourceMetrics, oResourceNames)
+		if len(oResourceNames) != 1 || oResourceNames[0] != usageclients.MetricResource {
+			return nil, fmt.Errorf("targetThresholds are expected to specify a single instance of %q resource, got %v instead", usageclients.MetricResource, oResourceNames)
 		}
 	} else {
 		setDefaultForLNUThresholds(lowNodeUtilizationArgsArgs.Thresholds, lowNodeUtilizationArgsArgs.TargetThresholds, lowNodeUtilizationArgsArgs.UseDeviationThresholds)
@@ -100,19 +102,19 @@ func NewLowNodeUtilization(args runtime.Object, handle frameworktypes.Handle) (f
 
 	resourceNames := getResourceNames(lowNodeUtilizationArgsArgs.Thresholds)
 
-	var usageClient usageClient
+	var usageClient usageclients.Interface
 	if lowNodeUtilizationArgsArgs.MetricsUtilization.MetricsServer {
 		if handle.MetricsCollector() == nil {
 			return nil, fmt.Errorf("metrics client not initialized")
 		}
-		usageClient = newActualUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc(), handle.MetricsCollector())
+		usageClient = usageclients.NewActualUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc(), handle.MetricsCollector())
 	} else if lowNodeUtilizationArgsArgs.MetricsUtilization.Prometheus.Query != "" {
 		if handle.PrometheusClient() == nil {
 			return nil, fmt.Errorf("prometheus client not initialized")
 		}
-		usageClient = newPrometheusUsageClient(handle.GetPodsAssignedToNodeFunc(), handle.PrometheusClient(), lowNodeUtilizationArgsArgs.MetricsUtilization.Prometheus.Query)
+		usageClient = usageclients.NewPrometheusUsageClient(handle.GetPodsAssignedToNodeFunc(), handle.PrometheusClient(), lowNodeUtilizationArgsArgs.MetricsUtilization.Prometheus.Query)
 	} else {
-		usageClient = newRequestedUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc())
+		usageClient = usageclients.NewRequestedUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc())
 	}
 
 	return &LowNodeUtilization{
@@ -133,25 +135,38 @@ func (l *LowNodeUtilization) Name() string {
 
 // Balance extension point implementation for the plugin
 func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
-	if err := l.usageClient.sync(nodes); err != nil {
+	if err := l.usageClient.Sync(nodes); err != nil {
 		return &frameworktypes.Status{
 			Err: fmt.Errorf("error getting node usage: %v", err),
 		}
 	}
 
-	lowNodes, sourceNodes := classifyNodes(
-		getNodeUsage(nodes, l.usageClient),
-		getNodeThresholds(nodes, l.args.Thresholds, l.args.TargetThresholds, l.resourceNames, l.args.UseDeviationThresholds, l.usageClient),
-		// The node has to be schedulable (to be able to move workload there)
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			if nodeutil.IsNodeUnschedulable(node) {
-				klog.V(2).InfoS("Node is unschedulable, thus not considered as underutilized", "node", klog.KObj(node))
-				return false
+	thresholdsProcessor := thresholds.NewNodeProcessor(
+		nodes,
+		l.args.Thresholds,
+		l.args.TargetThresholds,
+		l.resourceNames,
+		l.args.UseDeviationThresholds,
+		l.usageClient,
+	)
+
+	lowNodes, sourceNodes := []NodeInfo{}, []NodeInfo{}
+	thresholdsProcessor.Classify(
+		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
+			if nodeutil.IsNodeUnschedulable(usage.Node) {
+				klog.V(2).InfoS("Node is unschedulable, thus not considered as underutilized", "node", klog.KObj(usage.Node))
+				return
 			}
-			return isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
+			if !isNodeWithLowUtilization(usage, threshold.Low) {
+				return
+			}
+			lowNodes = append(lowNodes, NodeInfo{usage, threshold})
 		},
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			return isNodeAboveTargetUtilization(usage, threshold.highResourceThreshold)
+		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
+			if !isNodeAboveTargetUtilization(usage, threshold.High) {
+				return
+			}
+			sourceNodes = append(sourceNodes, NodeInfo{usage, threshold})
 		},
 	)
 
@@ -185,7 +200,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 
 	// stop if node utilization drops below target threshold or any of required capacity (cpu, memory, pods) is moved
 	continueEvictionCond := func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool {
-		if !isNodeAboveTargetUtilization(nodeInfo.NodeUsage, nodeInfo.thresholds.highResourceThreshold) {
+		if !isNodeAboveTargetUtilization(nodeInfo.NodeUsage, nodeInfo.thresholds.High) {
 			return false
 		}
 		for name := range totalAvailableUsage {
@@ -216,33 +231,33 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 	return nil
 }
 
-func setDefaultForLNUThresholds(thresholds, targetThresholds api.ResourceThresholds, useDeviationThresholds bool) {
+func setDefaultForLNUThresholds(curThresholds, targetThresholds api.ResourceThresholds, useDeviationThresholds bool) {
 	// check if Pods/CPU/Mem are set, if not, set them to 100
-	if _, ok := thresholds[v1.ResourcePods]; !ok {
+	if _, ok := curThresholds[v1.ResourcePods]; !ok {
 		if useDeviationThresholds {
-			thresholds[v1.ResourcePods] = MinResourcePercentage
-			targetThresholds[v1.ResourcePods] = MinResourcePercentage
+			curThresholds[v1.ResourcePods] = thresholds.MinResourcePercentage
+			targetThresholds[v1.ResourcePods] = thresholds.MinResourcePercentage
 		} else {
-			thresholds[v1.ResourcePods] = MaxResourcePercentage
-			targetThresholds[v1.ResourcePods] = MaxResourcePercentage
+			curThresholds[v1.ResourcePods] = thresholds.MaxResourcePercentage
+			targetThresholds[v1.ResourcePods] = thresholds.MaxResourcePercentage
 		}
 	}
-	if _, ok := thresholds[v1.ResourceCPU]; !ok {
+	if _, ok := curThresholds[v1.ResourceCPU]; !ok {
 		if useDeviationThresholds {
-			thresholds[v1.ResourceCPU] = MinResourcePercentage
-			targetThresholds[v1.ResourceCPU] = MinResourcePercentage
+			curThresholds[v1.ResourceCPU] = thresholds.MinResourcePercentage
+			targetThresholds[v1.ResourceCPU] = thresholds.MinResourcePercentage
 		} else {
-			thresholds[v1.ResourceCPU] = MaxResourcePercentage
-			targetThresholds[v1.ResourceCPU] = MaxResourcePercentage
+			curThresholds[v1.ResourceCPU] = thresholds.MaxResourcePercentage
+			targetThresholds[v1.ResourceCPU] = thresholds.MaxResourcePercentage
 		}
 	}
-	if _, ok := thresholds[v1.ResourceMemory]; !ok {
+	if _, ok := curThresholds[v1.ResourceMemory]; !ok {
 		if useDeviationThresholds {
-			thresholds[v1.ResourceMemory] = MinResourcePercentage
-			targetThresholds[v1.ResourceMemory] = MinResourcePercentage
+			curThresholds[v1.ResourceMemory] = thresholds.MinResourcePercentage
+			targetThresholds[v1.ResourceMemory] = thresholds.MinResourcePercentage
 		} else {
-			thresholds[v1.ResourceMemory] = MaxResourcePercentage
-			targetThresholds[v1.ResourceMemory] = MaxResourcePercentage
+			curThresholds[v1.ResourceMemory] = thresholds.MaxResourcePercentage
+			targetThresholds[v1.ResourceMemory] = thresholds.MaxResourcePercentage
 		}
 	}
 }

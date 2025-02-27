@@ -18,6 +18,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/descheduler/pkg/api"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/thresholds"
 )
 
 func ValidateHighNodeUtilizationArgs(obj runtime.Object) error {
@@ -71,13 +72,13 @@ func validateLowNodeUtilizationThresholds(thresholds, targetThresholds api.Resou
 }
 
 // validateThresholds checks if thresholds have valid resource name and resource percentage configured
-func validateThresholds(thresholds api.ResourceThresholds) error {
-	if len(thresholds) == 0 {
+func validateThresholds(curThresholds api.ResourceThresholds) error {
+	if len(curThresholds) == 0 {
 		return fmt.Errorf("no resource threshold is configured")
 	}
-	for name, percent := range thresholds {
-		if percent < MinResourcePercentage || percent > MaxResourcePercentage {
-			return fmt.Errorf("%v threshold not in [%v, %v] range", name, MinResourcePercentage, MaxResourcePercentage)
+	for name, percent := range curThresholds {
+		if percent < thresholds.MinResourcePercentage || percent > thresholds.MaxResourcePercentage {
+			return fmt.Errorf("%v threshold not in [%v, %v] range", name, thresholds.MinResourcePercentage, thresholds.MaxResourcePercentage)
 		}
 	}
 	return nil

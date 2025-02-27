@@ -18,7 +18,10 @@ package nodeutilization
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
@@ -32,6 +35,7 @@ import (
 	"k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	fakemetricsclient "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	"sigs.k8s.io/descheduler/pkg/descheduler/metricscollector"
@@ -42,6 +46,11 @@ import (
 	"sigs.k8s.io/descheduler/test"
 
 	"github.com/prometheus/common/model"
+)
+
+var (
+	nodesgvr = schema.GroupVersionResource{Group: "metrics.k8s.io", Version: "v1beta1", Resource: "nodes"}
+	podsgvr  = schema.GroupVersionResource{Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"}
 )
 
 func TestLowNodeUtilization(t *testing.T) {
@@ -1529,4 +1538,46 @@ func TestLowNodeUtilizationWithPrometheusMetrics(t *testing.T) {
 		}
 		t.Run(tc.name, testFnc(false, tc.expectedPodsEvicted))
 	}
+}
+
+func sample(metricName, nodeName string, value float64) *model.Sample {
+	return &model.Sample{
+		Metric: model.Metric{
+			"__name__": model.LabelValue(metricName),
+			"instance": model.LabelValue(nodeName),
+		},
+		Value:     model.SampleValue(value),
+		Timestamp: 1728991761711,
+	}
+}
+
+type fakePromClient struct {
+	result   interface{}
+	dataType model.ValueType
+}
+
+func (client *fakePromClient) URL(ep string, args map[string]string) *url.URL {
+	return &url.URL{}
+}
+
+func (client *fakePromClient) Do(ctx context.Context, request *http.Request) (*http.Response, []byte, error) {
+	jsonData, err := json.Marshal(fakePayload{
+		Status: "success",
+		Data: queryResult{
+			Type:   client.dataType,
+			Result: client.result,
+		},
+	})
+
+	return &http.Response{StatusCode: 200}, jsonData, err
+}
+
+type fakePayload struct {
+	Status string      `json:"status"`
+	Data   queryResult `json:"data"`
+}
+
+type queryResult struct {
+	Type   model.ValueType `json:"resultType"`
+	Result interface{}     `json:"result"`
 }

@@ -17,18 +17,18 @@ limitations under the License.
 package nodeutilization
 
 import (
-	"math"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/usageclients"
 )
 
 func BuildTestNodeInfo(name string, apply func(*NodeInfo)) *NodeInfo {
 	nodeInfo := &NodeInfo{
-		NodeUsage: NodeUsage{
-			node: &v1.Node{
+		NodeUsage: usageclients.NodeUsage{
+			Node: &v1.Node{
 				Status: v1.NodeStatus{
 					Capacity: v1.ResourceList{
 						v1.ResourceCPU:    *resource.NewMilliQuantity(2000, resource.DecimalSI),
@@ -55,44 +55,6 @@ var (
 	extendedResource = v1.ResourceName("example.com/foo")
 )
 
-func TestResourceUsagePercentages(t *testing.T) {
-	resourceUsagePercentage := resourceUsagePercentages(NodeUsage{
-		node: &v1.Node{
-			Status: v1.NodeStatus{
-				Capacity: v1.ResourceList{
-					v1.ResourceCPU:    *resource.NewMilliQuantity(2000, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(3977868*1024, resource.BinarySI),
-					v1.ResourcePods:   *resource.NewQuantity(29, resource.BinarySI),
-				},
-				Allocatable: v1.ResourceList{
-					v1.ResourceCPU:    *resource.NewMilliQuantity(1930, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(3287692*1024, resource.BinarySI),
-					v1.ResourcePods:   *resource.NewQuantity(29, resource.BinarySI),
-				},
-			},
-		},
-		usage: map[v1.ResourceName]*resource.Quantity{
-			v1.ResourceCPU:    resource.NewMilliQuantity(1220, resource.DecimalSI),
-			v1.ResourceMemory: resource.NewQuantity(3038982964, resource.BinarySI),
-			v1.ResourcePods:   resource.NewQuantity(11, resource.BinarySI),
-		},
-	})
-
-	expectedUsageInIntPercentage := map[v1.ResourceName]float64{
-		v1.ResourceCPU:    63,
-		v1.ResourceMemory: 90,
-		v1.ResourcePods:   37,
-	}
-
-	for resourceName, percentage := range expectedUsageInIntPercentage {
-		if math.Floor(resourceUsagePercentage[resourceName]) != percentage {
-			t.Errorf("Incorrect percentange computation, expected %v, got math.Floor(%v) instead", percentage, resourceUsagePercentage[resourceName])
-		}
-	}
-
-	t.Logf("resourceUsagePercentage: %#v\n", resourceUsagePercentage)
-}
-
 func TestSortNodesByUsage(t *testing.T) {
 	tests := []struct {
 		name                  string
@@ -103,21 +65,21 @@ func TestSortNodesByUsage(t *testing.T) {
 			name: "cpu memory pods",
 			nodeInfoList: []NodeInfo{
 				*BuildTestNodeInfo("node1", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceCPU:    resource.NewMilliQuantity(1730, resource.DecimalSI),
 						v1.ResourceMemory: resource.NewQuantity(3038982964, resource.BinarySI),
 						v1.ResourcePods:   resource.NewQuantity(25, resource.BinarySI),
 					}
 				}),
 				*BuildTestNodeInfo("node2", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceCPU:    resource.NewMilliQuantity(1220, resource.DecimalSI),
 						v1.ResourceMemory: resource.NewQuantity(3038982964, resource.BinarySI),
 						v1.ResourcePods:   resource.NewQuantity(11, resource.BinarySI),
 					}
 				}),
 				*BuildTestNodeInfo("node3", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceCPU:    resource.NewMilliQuantity(1530, resource.DecimalSI),
 						v1.ResourceMemory: resource.NewQuantity(5038982964, resource.BinarySI),
 						v1.ResourcePods:   resource.NewQuantity(20, resource.BinarySI),
@@ -130,17 +92,17 @@ func TestSortNodesByUsage(t *testing.T) {
 			name: "memory",
 			nodeInfoList: []NodeInfo{
 				*BuildTestNodeInfo("node1", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceMemory: resource.NewQuantity(3038982964, resource.BinarySI),
 					}
 				}),
 				*BuildTestNodeInfo("node2", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceMemory: resource.NewQuantity(2038982964, resource.BinarySI),
 					}
 				}),
 				*BuildTestNodeInfo("node3", func(nodeInfo *NodeInfo) {
-					nodeInfo.usage = map[v1.ResourceName]*resource.Quantity{
+					nodeInfo.Usage = map[v1.ResourceName]*resource.Quantity{
 						v1.ResourceMemory: resource.NewQuantity(5038982964, resource.BinarySI),
 					}
 				}),
@@ -154,8 +116,8 @@ func TestSortNodesByUsage(t *testing.T) {
 			sortNodesByUsage(tc.nodeInfoList, false) // ascending=false, sort nodes in descending order
 
 			for i := 0; i < len(tc.nodeInfoList); i++ {
-				if tc.nodeInfoList[i].NodeUsage.node.Name != tc.expectedNodeInfoNames[i] {
-					t.Errorf("Expected %v, got %v", tc.expectedNodeInfoNames[i], tc.nodeInfoList[i].NodeUsage.node.Name)
+				if tc.nodeInfoList[i].NodeUsage.Node.Name != tc.expectedNodeInfoNames[i] {
+					t.Errorf("Expected %v, got %v", tc.expectedNodeInfoNames[i], tc.nodeInfoList[i].NodeUsage.Node.Name)
 				}
 			}
 		})
@@ -164,8 +126,8 @@ func TestSortNodesByUsage(t *testing.T) {
 
 			size := len(tc.nodeInfoList)
 			for i := 0; i < size; i++ {
-				if tc.nodeInfoList[i].NodeUsage.node.Name != tc.expectedNodeInfoNames[size-i-1] {
-					t.Errorf("Expected %v, got %v", tc.expectedNodeInfoNames[size-i-1], tc.nodeInfoList[i].NodeUsage.node.Name)
+				if tc.nodeInfoList[i].NodeUsage.Node.Name != tc.expectedNodeInfoNames[size-i-1] {
+					t.Errorf("Expected %v, got %v", tc.expectedNodeInfoNames[size-i-1], tc.nodeInfoList[i].NodeUsage.Node.Name)
 				}
 			}
 		})

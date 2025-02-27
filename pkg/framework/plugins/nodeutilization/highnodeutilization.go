@@ -29,6 +29,8 @@ import (
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/thresholds"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/usageclients"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 )
 
@@ -44,7 +46,7 @@ type HighNodeUtilization struct {
 	underutilizationCriteria []interface{}
 	resourceNames            []v1.ResourceName
 	targetThresholds         api.ResourceThresholds
-	usageClient              usageClient
+	usageClient              usageclients.Interface
 }
 
 var _ frameworktypes.BalancePlugin = &HighNodeUtilization{}
@@ -85,7 +87,7 @@ func NewHighNodeUtilization(args runtime.Object, handle frameworktypes.Handle) (
 		targetThresholds:         targetThresholds,
 		underutilizationCriteria: underutilizationCriteria,
 		podFilter:                podFilter,
-		usageClient:              newRequestedUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc()),
+		usageClient:              usageclients.NewRequestedUsageClient(resourceNames, handle.GetPodsAssignedToNodeFunc()),
 	}, nil
 }
 
@@ -96,25 +98,36 @@ func (h *HighNodeUtilization) Name() string {
 
 // Balance extension point implementation for the plugin
 func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
-	if err := h.usageClient.sync(nodes); err != nil {
+	if err := h.usageClient.Sync(nodes); err != nil {
 		return &frameworktypes.Status{
 			Err: fmt.Errorf("error getting node usage: %v", err),
 		}
 	}
 
-	sourceNodes, highNodes := classifyNodes(
-		getNodeUsage(nodes, h.usageClient),
-		getNodeThresholds(nodes, h.args.Thresholds, h.targetThresholds, h.resourceNames, false, h.usageClient),
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			return isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
-		},
-		func(node *v1.Node, usage NodeUsage, threshold NodeThresholds) bool {
-			if nodeutil.IsNodeUnschedulable(node) {
-				klog.V(2).InfoS("Node is unschedulable", "node", klog.KObj(node))
-				return false
+	thresholdsProcessor := thresholds.NewNodeProcessor(
+		nodes,
+		h.args.Thresholds,
+		h.targetThresholds,
+		h.resourceNames,
+		false,
+		h.usageClient,
+	)
+
+	sourceNodes, highNodes := []NodeInfo{}, []NodeInfo{}
+	thresholdsProcessor.Classify(
+		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
+			if !isNodeWithLowUtilization(usage, threshold.Low) {
+				return
 			}
-			return !isNodeWithLowUtilization(usage, threshold.lowResourceThreshold)
-		})
+			sourceNodes = append(sourceNodes, NodeInfo{usage, threshold})
+		},
+		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
+			if nodeutil.IsNodeUnschedulable(usage.Node) || isNodeWithLowUtilization(usage, threshold.Low) {
+				return
+			}
+			highNodes = append(highNodes, NodeInfo{usage, threshold})
+		},
+	)
 
 	// log message in one line
 	klog.V(1).InfoS("Criteria for a node below target utilization", h.underutilizationCriteria...)
@@ -167,26 +180,26 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 	return nil
 }
 
-func setDefaultForThresholds(thresholds, targetThresholds api.ResourceThresholds) {
+func setDefaultForThresholds(curThresholds, targetThresholds api.ResourceThresholds) {
 	// check if Pods/CPU/Mem are set, if not, set them to 100
-	if _, ok := thresholds[v1.ResourcePods]; !ok {
-		thresholds[v1.ResourcePods] = MaxResourcePercentage
+	if _, ok := curThresholds[v1.ResourcePods]; !ok {
+		curThresholds[v1.ResourcePods] = thresholds.MaxResourcePercentage
 	}
-	if _, ok := thresholds[v1.ResourceCPU]; !ok {
-		thresholds[v1.ResourceCPU] = MaxResourcePercentage
+	if _, ok := curThresholds[v1.ResourceCPU]; !ok {
+		curThresholds[v1.ResourceCPU] = thresholds.MaxResourcePercentage
 	}
-	if _, ok := thresholds[v1.ResourceMemory]; !ok {
-		thresholds[v1.ResourceMemory] = MaxResourcePercentage
+	if _, ok := curThresholds[v1.ResourceMemory]; !ok {
+		curThresholds[v1.ResourceMemory] = thresholds.MaxResourcePercentage
 	}
 
 	// Default targetThreshold resource values to 100
-	targetThresholds[v1.ResourcePods] = MaxResourcePercentage
-	targetThresholds[v1.ResourceCPU] = MaxResourcePercentage
-	targetThresholds[v1.ResourceMemory] = MaxResourcePercentage
+	targetThresholds[v1.ResourcePods] = thresholds.MaxResourcePercentage
+	targetThresholds[v1.ResourceCPU] = thresholds.MaxResourcePercentage
+	targetThresholds[v1.ResourceMemory] = thresholds.MaxResourcePercentage
 
-	for name := range thresholds {
+	for name := range curThresholds {
 		if !nodeutil.IsBasicResource(name) {
-			targetThresholds[name] = MaxResourcePercentage
+			targetThresholds[name] = thresholds.MaxResourcePercentage
 		}
 	}
 }
