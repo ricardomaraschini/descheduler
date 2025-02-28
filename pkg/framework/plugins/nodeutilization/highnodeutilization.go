@@ -113,13 +113,13 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 		h.usageClient,
 	)
 
-	sourceNodes, highNodes := []NodeInfo{}, []NodeInfo{}
+	lowNodes, highNodes := []NodeInfo{}, []NodeInfo{}
 	thresholdsProcessor.Classify(
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
 			if !isNodeWithLowUtilization(usage, threshold.Low) {
 				return
 			}
-			sourceNodes = append(sourceNodes, NodeInfo{usage, threshold})
+			lowNodes = append(lowNodes, NodeInfo{usage, threshold})
 		},
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
 			if nodeutil.IsNodeUnschedulable(usage.Node) || isNodeWithLowUtilization(usage, threshold.Low) {
@@ -131,17 +131,17 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 
 	// log message in one line
 	klog.V(1).InfoS("Criteria for a node below target utilization", h.underutilizationCriteria...)
-	klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(sourceNodes))
+	klog.V(1).InfoS("Number of underutilized nodes", "totalNumber", len(lowNodes))
 
-	if len(sourceNodes) == 0 {
+	if len(lowNodes) == 0 {
 		klog.V(1).InfoS("No node is underutilized, nothing to do here, you might tune your thresholds further")
 		return nil
 	}
-	if len(sourceNodes) <= h.args.NumberOfNodes {
-		klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(sourceNodes), "numberOfNodes", h.args.NumberOfNodes)
+	if len(lowNodes) <= h.args.NumberOfNodes {
+		klog.V(1).InfoS("Number of nodes underutilized is less or equal than NumberOfNodes, nothing to do here", "underutilizedNodes", len(lowNodes), "numberOfNodes", h.args.NumberOfNodes)
 		return nil
 	}
-	if len(sourceNodes) == len(nodes) {
+	if len(lowNodes) == len(nodes) {
 		klog.V(1).InfoS("All nodes are underutilized, nothing to do here")
 		return nil
 	}
@@ -162,12 +162,12 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 	}
 
 	// Sort the nodes by the usage in ascending order
-	sortNodesByUsage(sourceNodes, true)
+	sortNodesByUsage(lowNodes, true)
 
 	evictPodsFromSourceNodes(
 		ctx,
 		h.args.EvictableNamespaces,
-		sourceNodes,
+		lowNodes,
 		highNodes,
 		h.handle.Evictor(),
 		evictions.EvictOptions{StrategyName: HighNodeUtilizationPluginName},

@@ -133,6 +133,36 @@ func (l *LowNodeUtilization) Name() string {
 	return LowNodeUtilizationPluginName
 }
 
+// IsNodeWithLowUtilization returns true if the node is underutilized. This
+// functions take all metrics into account.
+func (l *LowNodeUtilization) IsNodeWithLowUtilization(
+	usage usageclients.NodeUsage,
+	threshold map[v1.ResourceName]*resource.Quantity,
+) bool {
+	for name, nodeValue := range usage.Usage {
+		// usage.lowResourceThreshold[name] < nodeValue
+		if threshold[name].Cmp(*nodeValue) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
+// IsNodeWithHighUtilization returns true if the node is overutilized. This
+// functions take all metrics into account.
+func (l *LowNodeUtilization) IsNodeWithHighUtilization(
+	usage usageclients.NodeUsage,
+	threshold map[v1.ResourceName]*resource.Quantity,
+) bool {
+	for name, nodeValue := range usage.Usage {
+		// usage.highResourceThreshold[name] < nodeValue
+		if threshold[name].Cmp(*nodeValue) == -1 {
+			return true
+		}
+	}
+	return false
+}
+
 // Balance extension point implementation for the plugin
 func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
 	if err := l.usageClient.Sync(nodes); err != nil {
@@ -150,23 +180,22 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 		l.usageClient,
 	)
 
-	lowNodes, sourceNodes := []NodeInfo{}, []NodeInfo{}
+	lowNodes, highNodes := []NodeInfo{}, []NodeInfo{}
 	thresholdsProcessor.Classify(
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
 			if nodeutil.IsNodeUnschedulable(usage.Node) {
 				klog.V(2).InfoS("Node is unschedulable, thus not considered as underutilized", "node", klog.KObj(usage.Node))
 				return
 			}
-			if !isNodeWithLowUtilization(usage, threshold.Low) {
+			if !l.IsNodeWithLowUtilization(usage, threshold.Low) {
 				return
 			}
 			lowNodes = append(lowNodes, NodeInfo{usage, threshold})
 		},
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
-			if !isNodeAboveTargetUtilization(usage, threshold.High) {
-				return
+			if l.IsNodeWithHighUtilization(usage, threshold.High) {
+				highNodes = append(highNodes, NodeInfo{usage, threshold})
 			}
-			sourceNodes = append(sourceNodes, NodeInfo{usage, threshold})
 		},
 	)
 
@@ -176,7 +205,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 
 	// log message for over utilized nodes
 	klog.V(1).InfoS("Criteria for a node above target utilization", l.overutilizationCriteria...)
-	klog.V(1).InfoS("Number of overutilized nodes", "totalNumber", len(sourceNodes))
+	klog.V(1).InfoS("Number of overutilized nodes", "totalNumber", len(highNodes))
 
 	if len(lowNodes) == 0 {
 		klog.V(1).InfoS("No node is underutilized, nothing to do here, you might tune your thresholds further")
@@ -193,7 +222,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 		return nil
 	}
 
-	if len(sourceNodes) == 0 {
+	if len(highNodes) == 0 {
 		klog.V(1).InfoS("All nodes are under target utilization, nothing to do here")
 		return nil
 	}
@@ -213,12 +242,12 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 	}
 
 	// Sort the nodes by the usage in descending order
-	sortNodesByUsage(sourceNodes, false)
+	sortNodesByUsage(highNodes, false)
 
 	evictPodsFromSourceNodes(
 		ctx,
 		l.args.EvictableNamespaces,
-		sourceNodes,
+		highNodes,
 		lowNodes,
 		l.handle.Evictor(),
 		evictions.EvictOptions{StrategyName: LowNodeUtilizationPluginName},
