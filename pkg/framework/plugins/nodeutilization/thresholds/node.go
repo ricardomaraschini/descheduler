@@ -24,21 +24,23 @@ import (
 )
 
 const (
-	// MinResourcePercentage is the minimum value of a resource's percentage
+	// MinResourcePercentage is the minimum value of a resource's
+	// percentage.
 	MinResourcePercentage = 0
-	// MaxResourcePercentage is the maximum value of a resource's percentage
+	// MaxResourcePercentage is the maximum value of a resource's
+	// percentage.
 	MaxResourcePercentage = 100
 )
 
 // ClassifyNodeFn is a function that is capable of classifying a node based on
-// its usage. This function is opaque, whoever does the classification does it
-// outside of the context of this package.
+// its usage. This function is opaque from this package point of view, whoever
+// does the classification does it outside of the context of this package.
 type ClassifyNodeFn func(usageclients.NodeUsage, NodeThresholds)
 
 // NodeThresholds struct represents the usage thresholds for a node. It has
 // both a low and high limits. The idea is that if the node is over the high
-// limit, it may be over utilized while it it is below the lower limit then
-// it is underutilized.
+// limit, it is overutilized while it it is below the lower limit then it is
+// underutilized.
 type NodeThresholds struct {
 	Low  map[v1.ResourceName]*resource.Quantity
 	High map[v1.ResourceName]*resource.Quantity
@@ -77,8 +79,8 @@ func NewNodeProcessor(
 }
 
 // resourceThreshold calculates the resource threshold for the given resource
-// name and threshold percentage. The threshold is calculated as a percentage
-// of the node's capacity.
+// name and threshold. The threshold is calculated as a percentage of the
+// node's capacity.
 func (n *NodeProcessor) resourceThreshold(
 	nodeCapacity v1.ResourceList,
 	resourceName v1.ResourceName,
@@ -93,21 +95,21 @@ func (n *NodeProcessor) resourceThreshold(
 	// `threshold * 0.01` will convert <0;100> interval into <0;1>.
 	// Multiplying it with capacity will give fraction of the capacity
 	// corresponding to the given resource threshold in Quantity units.
-	resourceFraction := func(resourceNodeCapacity int64) int64 {
-		return int64(float64(threshold) * 0.01 * float64(resourceNodeCapacity))
+	fraction := func(resourceCapacity int64) int64 {
+		return int64(float64(threshold) * 0.01 * float64(resourceCapacity))
 	}
 
 	resourceCapacityQuantity := nodeCapacity.Name(resourceName, defaultFormat)
 
 	if resourceName == v1.ResourceCPU {
 		return resource.NewMilliQuantity(
-			resourceFraction(resourceCapacityQuantity.MilliValue()),
+			fraction(resourceCapacityQuantity.MilliValue()),
 			defaultFormat,
 		)
 	}
 
 	return resource.NewQuantity(
-		resourceFraction(resourceCapacityQuantity.Value()),
+		fraction(resourceCapacityQuantity.Value()),
 		defaultFormat,
 	)
 }
@@ -128,7 +130,7 @@ func (n *NodeProcessor) normalizePercentage(percent api.Percentage) api.Percenta
 // thresholds are used, the average is used to calculate the thresholds. If
 // not, the thresholds are copied directly from the provided values.
 func (n NodeProcessor) thresholdsForNode(node *v1.Node, average api.ResourceThresholds) NodeThresholds {
-	nodeCapacity := n.usageClient.NodeCapacity(node)
+	capacity := n.usageClient.NodeCapacity(node)
 
 	thresholds := NodeThresholds{
 		Low:  map[v1.ResourceName]*resource.Quantity{},
@@ -141,30 +143,30 @@ func (n NodeProcessor) thresholdsForNode(node *v1.Node, average api.ResourceThre
 		// directly.
 		if !n.useDeviationThresholds {
 			thresholds.Low[resourceName] = n.resourceThreshold(
-				nodeCapacity, resourceName, n.lowThreshold[resourceName],
+				capacity, resourceName, n.lowThreshold[resourceName],
 			)
 
 			thresholds.High[resourceName] = n.resourceThreshold(
-				nodeCapacity, resourceName, n.highThreshold[resourceName],
+				capacity, resourceName, n.highThreshold[resourceName],
 			)
 			continue
 		}
 
-		capacity := nodeCapacity[resourceName]
+		resCapacity := capacity[resourceName]
 		if n.lowThreshold[resourceName] == MinResourcePercentage {
-			thresholds.Low[resourceName] = &capacity
-			thresholds.High[resourceName] = &capacity
+			thresholds.Low[resourceName] = &resCapacity
+			thresholds.High[resourceName] = &resCapacity
 			continue
 		}
 
 		pct := average[resourceName] - n.lowThreshold[resourceName]
 		thresholds.Low[resourceName] = n.resourceThreshold(
-			nodeCapacity, resourceName, n.normalizePercentage(pct),
+			capacity, resourceName, n.normalizePercentage(pct),
 		)
 
 		pct = average[resourceName] + n.highThreshold[resourceName]
 		thresholds.High[resourceName] = n.resourceThreshold(
-			nodeCapacity, resourceName, n.normalizePercentage(pct),
+			capacity, resourceName, n.normalizePercentage(pct),
 		)
 	}
 
