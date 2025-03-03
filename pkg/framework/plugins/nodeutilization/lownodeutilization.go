@@ -133,36 +133,6 @@ func (l *LowNodeUtilization) Name() string {
 	return LowNodeUtilizationPluginName
 }
 
-// IsNodeWithLowUtilization returns true if the node is underutilized. This
-// functions take all metrics into account.
-func (l *LowNodeUtilization) IsNodeWithLowUtilization(
-	usage usageclients.NodeUsage,
-	threshold map[v1.ResourceName]*resource.Quantity,
-) bool {
-	for name, nodeValue := range usage.Usage {
-		// usage.lowResourceThreshold[name] < nodeValue
-		if threshold[name].Cmp(*nodeValue) == -1 {
-			return false
-		}
-	}
-	return true
-}
-
-// IsNodeWithHighUtilization returns true if the node is overutilized. This
-// functions take all metrics into account.
-func (l *LowNodeUtilization) IsNodeWithHighUtilization(
-	usage usageclients.NodeUsage,
-	threshold map[v1.ResourceName]*resource.Quantity,
-) bool {
-	for name, nodeValue := range usage.Usage {
-		// usage.highResourceThreshold[name] < nodeValue
-		if threshold[name].Cmp(*nodeValue) == -1 {
-			return true
-		}
-	}
-	return false
-}
-
 // Balance extension point implementation for the plugin
 func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
 	if err := l.usageClient.Sync(nodes); err != nil {
@@ -187,13 +157,13 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 				klog.V(2).InfoS("Node is unschedulable, thus not considered as underutilized", "node", klog.KObj(usage.Node))
 				return
 			}
-			if !l.IsNodeWithLowUtilization(usage, threshold.Low) {
+			if !thresholdsProcessor.IsNodeWithLowUtilization(usage, threshold.Low) {
 				return
 			}
 			lowNodes = append(lowNodes, NodeInfo{usage, threshold})
 		},
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
-			if l.IsNodeWithHighUtilization(usage, threshold.High) {
+			if thresholdsProcessor.IsNodeWithHighUtilization(usage, threshold.High) {
 				highNodes = append(highNodes, NodeInfo{usage, threshold})
 			}
 		},

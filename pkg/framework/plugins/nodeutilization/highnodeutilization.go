@@ -116,13 +116,16 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 	lowNodes, highNodes := []NodeInfo{}, []NodeInfo{}
 	thresholdsProcessor.Classify(
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
-			if !isNodeWithLowUtilization(usage, threshold.Low) {
+			if !thresholdsProcessor.IsNodeWithLowUtilization(usage, threshold.Low) {
 				return
 			}
 			lowNodes = append(lowNodes, NodeInfo{usage, threshold})
 		},
 		func(usage usageclients.NodeUsage, threshold thresholds.NodeThresholds) {
-			if nodeutil.IsNodeUnschedulable(usage.Node) || isNodeWithLowUtilization(usage, threshold.Low) {
+			if nodeutil.IsNodeUnschedulable(usage.Node) {
+				return
+			}
+			if thresholdsProcessor.IsNodeWithLowUtilization(usage, threshold.Low) {
 				return
 			}
 			highNodes = append(highNodes, NodeInfo{usage, threshold})

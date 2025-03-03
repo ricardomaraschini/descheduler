@@ -124,6 +124,53 @@ func (n *NodeProcessor) normalizePercentage(percent api.Percentage) api.Percenta
 	return percent
 }
 
+// thresholdsForNode assess the thresholds for the given node. If deviation
+// thresholds are used, the average is used to calculate the thresholds. If
+// not, the thresholds are copied directly from the provided values.
+func (n NodeProcessor) thresholdsForNode(node *v1.Node, average api.ResourceThresholds) NodeThresholds {
+	nodeCapacity := n.usageClient.NodeCapacity(node)
+
+	thresholds := NodeThresholds{
+		Low:  map[v1.ResourceName]*resource.Quantity{},
+		High: map[v1.ResourceName]*resource.Quantity{},
+	}
+
+	for _, resourceName := range n.resourceNames {
+		// if we aren't using the deviation thresholds, things are
+		// simpler. we just need to guarantee that we copy the values
+		// directly.
+		if !n.useDeviationThresholds {
+			thresholds.Low[resourceName] = n.resourceThreshold(
+				nodeCapacity, resourceName, n.lowThreshold[resourceName],
+			)
+
+			thresholds.High[resourceName] = n.resourceThreshold(
+				nodeCapacity, resourceName, n.highThreshold[resourceName],
+			)
+			continue
+		}
+
+		capacity := nodeCapacity[resourceName]
+		if n.lowThreshold[resourceName] == MinResourcePercentage {
+			thresholds.Low[resourceName] = &capacity
+			thresholds.High[resourceName] = &capacity
+			continue
+		}
+
+		pct := average[resourceName] - n.lowThreshold[resourceName]
+		thresholds.Low[resourceName] = n.resourceThreshold(
+			nodeCapacity, resourceName, n.normalizePercentage(pct),
+		)
+
+		pct = average[resourceName] + n.highThreshold[resourceName]
+		thresholds.High[resourceName] = n.resourceThreshold(
+			nodeCapacity, resourceName, n.normalizePercentage(pct),
+		)
+	}
+
+	return thresholds
+}
+
 // process calculates the node thresholds using the provided usage client.
 func (n NodeProcessor) process() map[string]NodeThresholds {
 	result := map[string]NodeThresholds{}
@@ -137,45 +184,7 @@ func (n NodeProcessor) process() map[string]NodeThresholds {
 	}
 
 	for _, node := range n.nodes {
-		nodeCapacity := n.usageClient.NodeCapacity(node)
-
-		result[node.Name] = NodeThresholds{
-			Low:  map[v1.ResourceName]*resource.Quantity{},
-			High: map[v1.ResourceName]*resource.Quantity{},
-		}
-
-		for _, resourceName := range n.resourceNames {
-			// if we aren't using the deviation thresholds, things
-			// are simpler. we just need to guarantee that we copy
-			// the values directly.
-			if !n.useDeviationThresholds {
-				result[node.Name].Low[resourceName] = n.resourceThreshold(
-					nodeCapacity, resourceName, n.lowThreshold[resourceName],
-				)
-
-				result[node.Name].High[resourceName] = n.resourceThreshold(
-					nodeCapacity, resourceName, n.highThreshold[resourceName],
-				)
-				continue
-			}
-
-			capacity := nodeCapacity[resourceName]
-			if n.lowThreshold[resourceName] == MinResourcePercentage {
-				result[node.Name].Low[resourceName] = &capacity
-				result[node.Name].High[resourceName] = &capacity
-				continue
-			}
-
-			pct := average[resourceName] - n.lowThreshold[resourceName]
-			result[node.Name].Low[resourceName] = n.resourceThreshold(
-				nodeCapacity, resourceName, n.normalizePercentage(pct),
-			)
-
-			pct = average[resourceName] + n.highThreshold[resourceName]
-			result[node.Name].High[resourceName] = n.resourceThreshold(
-				nodeCapacity, resourceName, n.normalizePercentage(pct),
-			)
-		}
+		result[node.Name] = n.thresholdsForNode(node, average)
 	}
 
 	return result
@@ -192,4 +201,34 @@ func (n NodeProcessor) Classify(classifiers ...ClassifyNodeFn) {
 			classifier(usage, thresholds[usage.Node.Name])
 		}
 	}
+}
+
+// IsNodeWithHighUtilization returns true if the node is overutilized. This
+// functions take all metrics into account.
+func (n *NodeProcessor) IsNodeWithHighUtilization(
+	usage usageclients.NodeUsage,
+	threshold map[v1.ResourceName]*resource.Quantity,
+) bool {
+	for name, nodeValue := range usage.Usage {
+		// usage.highResourceThreshold[name] < nodeValue
+		if threshold[name].Cmp(*nodeValue) == -1 {
+			return true
+		}
+	}
+	return false
+}
+
+// IsNodeWithLowUtilization returns true if the node is underutilized. This
+// functions take all metrics into account.
+func (n *NodeProcessor) IsNodeWithLowUtilization(
+	usage usageclients.NodeUsage,
+	threshold map[v1.ResourceName]*resource.Quantity,
+) bool {
+	for name, nodeValue := range usage.Usage {
+		// usage.lowResourceThreshold[name] < nodeValue
+		if threshold[name].Cmp(*nodeValue) == -1 {
+			return false
+		}
+	}
+	return true
 }
