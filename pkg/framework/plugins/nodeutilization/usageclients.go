@@ -30,6 +30,7 @@ import (
 	"k8s.io/klog/v2"
 	utilptr "k8s.io/utils/ptr"
 
+	"sigs.k8s.io/descheduler/pkg/api"
 	"sigs.k8s.io/descheduler/pkg/descheduler/metricscollector"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
@@ -63,9 +64,9 @@ type usageClient interface {
 	// after Balance method is invoked. There's no cache invalidation so each
 	// Balance is expected to get the latest data by invoking sync.
 	sync(nodes []*v1.Node) error
-	nodeUtilization(node string) map[v1.ResourceName]*resource.Quantity
+	nodeUtilization(node string) api.ReferencedResourceList
 	pods(node string) []*v1.Pod
-	podUsage(pod *v1.Pod) (map[v1.ResourceName]*resource.Quantity, error)
+	podUsage(pod *v1.Pod) (api.ReferencedResourceList, error)
 }
 
 type requestedUsageClient struct {
@@ -73,7 +74,7 @@ type requestedUsageClient struct {
 	getPodsAssignedToNode podutil.GetPodsAssignedToNodeFunc
 
 	_pods            map[string][]*v1.Pod
-	_nodeUtilization map[string]map[v1.ResourceName]*resource.Quantity
+	_nodeUtilization map[string]api.ReferencedResourceList
 }
 
 var _ usageClient = &requestedUsageClient{}
@@ -88,7 +89,7 @@ func newRequestedUsageClient(
 	}
 }
 
-func (s *requestedUsageClient) nodeUtilization(node string) map[v1.ResourceName]*resource.Quantity {
+func (s *requestedUsageClient) nodeUtilization(node string) api.ReferencedResourceList {
 	return s._nodeUtilization[node]
 }
 
@@ -96,8 +97,8 @@ func (s *requestedUsageClient) pods(node string) []*v1.Pod {
 	return s._pods[node]
 }
 
-func (s *requestedUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*resource.Quantity, error) {
-	usage := make(map[v1.ResourceName]*resource.Quantity)
+func (s *requestedUsageClient) podUsage(pod *v1.Pod) (api.ReferencedResourceList, error) {
+	usage := make(api.ReferencedResourceList)
 	for _, resourceName := range s.resourceNames {
 		usage[resourceName] = utilptr.To[resource.Quantity](utils.GetResourceRequestQuantity(pod, resourceName).DeepCopy())
 	}
@@ -105,7 +106,7 @@ func (s *requestedUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*resou
 }
 
 func (s *requestedUsageClient) sync(nodes []*v1.Node) error {
-	s._nodeUtilization = make(map[string]map[v1.ResourceName]*resource.Quantity)
+	s._nodeUtilization = make(map[string]api.ReferencedResourceList)
 	s._pods = make(map[string][]*v1.Pod)
 
 	for _, node := range nodes {
@@ -137,7 +138,7 @@ type actualUsageClient struct {
 	metricsCollector      *metricscollector.MetricsCollector
 
 	_pods            map[string][]*v1.Pod
-	_nodeUtilization map[string]map[v1.ResourceName]*resource.Quantity
+	_nodeUtilization map[string]api.ReferencedResourceList
 }
 
 var _ usageClient = &actualUsageClient{}
@@ -154,7 +155,7 @@ func newActualUsageClient(
 	}
 }
 
-func (client *actualUsageClient) nodeUtilization(node string) map[v1.ResourceName]*resource.Quantity {
+func (client *actualUsageClient) nodeUtilization(node string) api.ReferencedResourceList {
 	return client._nodeUtilization[node]
 }
 
@@ -162,7 +163,7 @@ func (client *actualUsageClient) pods(node string) []*v1.Pod {
 	return client._pods[node]
 }
 
-func (client *actualUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*resource.Quantity, error) {
+func (client *actualUsageClient) podUsage(pod *v1.Pod) (api.ReferencedResourceList, error) {
 	// It's not efficient to keep track of all pods in a cluster when only their fractions is evicted.
 	// Thus, take the current pod metrics without computing any softening (like e.g. EWMA).
 	podMetrics, err := client.metricsCollector.MetricsClient().MetricsV1beta1().PodMetricses(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
@@ -170,7 +171,7 @@ func (client *actualUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*res
 		return nil, fmt.Errorf("unable to get podmetrics for %q/%q: %v", pod.Namespace, pod.Name, err)
 	}
 
-	totalUsage := make(map[v1.ResourceName]*resource.Quantity)
+	totalUsage := make(api.ReferencedResourceList)
 	for _, container := range podMetrics.Containers {
 		for _, resourceName := range client.resourceNames {
 			if resourceName == v1.ResourcePods {
@@ -191,7 +192,7 @@ func (client *actualUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*res
 }
 
 func (client *actualUsageClient) sync(nodes []*v1.Node) error {
-	client._nodeUtilization = make(map[string]map[v1.ResourceName]*resource.Quantity)
+	client._nodeUtilization = make(map[string]api.ReferencedResourceList)
 	client._pods = make(map[string][]*v1.Pod)
 
 	nodesUsage, err := client.metricsCollector.AllNodesUsage()
@@ -232,7 +233,7 @@ type prometheusUsageClient struct {
 	promQuery             string
 
 	_pods            map[string][]*v1.Pod
-	_nodeUtilization map[string]map[v1.ResourceName]*resource.Quantity
+	_nodeUtilization map[string]api.ReferencedResourceList
 }
 
 var _ usageClient = &actualUsageClient{}
@@ -249,7 +250,7 @@ func newPrometheusUsageClient(
 	}
 }
 
-func (client *prometheusUsageClient) nodeUtilization(node string) map[v1.ResourceName]*resource.Quantity {
+func (client *prometheusUsageClient) nodeUtilization(node string) api.ReferencedResourceList {
 	return client._nodeUtilization[node]
 }
 
@@ -257,7 +258,7 @@ func (client *prometheusUsageClient) pods(node string) []*v1.Pod {
 	return client._pods[node]
 }
 
-func (client *prometheusUsageClient) podUsage(pod *v1.Pod) (map[v1.ResourceName]*resource.Quantity, error) {
+func (client *prometheusUsageClient) podUsage(pod *v1.Pod) (api.ReferencedResourceList, error) {
 	return nil, newNotSupportedError(prometheusUsageClientType)
 }
 
@@ -265,7 +266,7 @@ func (client *prometheusUsageClient) resourceNames() []v1.ResourceName {
 	return []v1.ResourceName{ResourceMetrics}
 }
 
-func NodeUsageFromPrometheusMetrics(ctx context.Context, promClient promapi.Client, promQuery string) (map[string]map[v1.ResourceName]*resource.Quantity, error) {
+func NodeUsageFromPrometheusMetrics(ctx context.Context, promClient promapi.Client, promQuery string) (map[string]api.ReferencedResourceList, error) {
 	results, warnings, err := promv1.NewAPI(promClient).Query(ctx, promQuery, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("unable to capture prometheus metrics: %v", err)
@@ -278,7 +279,7 @@ func NodeUsageFromPrometheusMetrics(ctx context.Context, promClient promapi.Clie
 		return nil, fmt.Errorf("expected query results to be of type %q, got %q instead", model.ValVector, results.Type())
 	}
 
-	nodeUsages := make(map[string]map[v1.ResourceName]*resource.Quantity)
+	nodeUsages := make(map[string]api.ReferencedResourceList)
 	for _, sample := range results.(model.Vector) {
 		nodeName, exists := sample.Metric["instance"]
 		if !exists {
@@ -287,7 +288,7 @@ func NodeUsageFromPrometheusMetrics(ctx context.Context, promClient promapi.Clie
 		if sample.Value < 0 || sample.Value > 1 {
 			return nil, fmt.Errorf("The collected metrics sample for %q has value %v outside of <0; 1> interval", string(nodeName), sample.Value)
 		}
-		nodeUsages[string(nodeName)] = map[v1.ResourceName]*resource.Quantity{
+		nodeUsages[string(nodeName)] = api.ReferencedResourceList{
 			ResourceMetrics: resource.NewQuantity(int64(sample.Value*100), resource.DecimalSI),
 		}
 	}
@@ -296,7 +297,7 @@ func NodeUsageFromPrometheusMetrics(ctx context.Context, promClient promapi.Clie
 }
 
 func (client *prometheusUsageClient) sync(nodes []*v1.Node) error {
-	client._nodeUtilization = make(map[string]map[v1.ResourceName]*resource.Quantity)
+	client._nodeUtilization = make(map[string]api.ReferencedResourceList)
 	client._pods = make(map[string][]*v1.Pod)
 
 	nodeUsages, err := NodeUsageFromPrometheusMetrics(context.TODO(), client.promClient, client.promQuery)

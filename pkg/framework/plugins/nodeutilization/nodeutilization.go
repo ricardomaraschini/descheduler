@@ -39,13 +39,13 @@ const ResourceMetrics = v1.ResourceName("MetricResource")
 // NodeUsage stores a node's info, pods on it, thresholds and its resource usage
 type NodeUsage struct {
 	node    *v1.Node
-	usage   map[v1.ResourceName]*resource.Quantity
+	usage   api.ReferencedResourceList
 	allPods []*v1.Pod
 }
 
 type NodeThresholds struct {
-	lowResourceThreshold  map[v1.ResourceName]*resource.Quantity
-	highResourceThreshold map[v1.ResourceName]*resource.Quantity
+	lowResourceThreshold  api.ReferencedResourceList
+	highResourceThreshold api.ReferencedResourceList
 }
 
 type NodeInfo struct {
@@ -53,7 +53,7 @@ type NodeInfo struct {
 	thresholds NodeThresholds
 }
 
-type continueEvictionCond func(nodeInfo NodeInfo, totalAvailableUsage map[v1.ResourceName]*resource.Quantity) bool
+type continueEvictionCond func(nodeInfo NodeInfo, totalAvailableUsage api.ReferencedResourceList) bool
 
 // NodePodsMap is a set of (node, pods) pairs
 type NodePodsMap map[*v1.Node][]*v1.Pod
@@ -100,8 +100,8 @@ func getNodeThresholds(
 		}
 
 		nodeThresholdsMap[node.Name] = NodeThresholds{
-			lowResourceThreshold:  map[v1.ResourceName]*resource.Quantity{},
-			highResourceThreshold: map[v1.ResourceName]*resource.Quantity{},
+			lowResourceThreshold:  api.ReferencedResourceList{},
+			highResourceThreshold: api.ReferencedResourceList{},
 		}
 
 		for _, resourceName := range resourceNames {
@@ -212,7 +212,7 @@ func classifyNodes(
 	return lowNodes, highNodes
 }
 
-func usageToKeysAndValues(usage map[v1.ResourceName]*resource.Quantity) []interface{} {
+func usageToKeysAndValues(usage api.ReferencedResourceList) []interface{} {
 	// log message in one line
 	keysAndValues := []interface{}{}
 	if quantity, exists := usage[v1.ResourceCPU]; exists {
@@ -247,7 +247,7 @@ func evictPodsFromSourceNodes(
 	usageClient usageClient,
 ) {
 	// upper bound on total number of pods/cpu/memory and optional extended resources to be moved
-	totalAvailableUsage := map[v1.ResourceName]*resource.Quantity{}
+	totalAvailableUsage := api.ReferencedResourceList{}
 	for _, resourceName := range resourceNames {
 		totalAvailableUsage[resourceName] = &resource.Quantity{}
 	}
@@ -302,7 +302,7 @@ func evictPods(
 	evictableNamespaces *api.Namespaces,
 	inputPods []*v1.Pod,
 	nodeInfo NodeInfo,
-	totalAvailableUsage map[v1.ResourceName]*resource.Quantity,
+	totalAvailableUsage api.ReferencedResourceList,
 	taintsOfLowNodes map[string][]v1.Taint,
 	podEvictor frameworktypes.Evictor,
 	evictOptions evictions.EvictOptions,
@@ -418,7 +418,7 @@ func sortNodesByUsage(nodes []NodeInfo, ascending bool) {
 
 // isNodeAboveTargetUtilization checks if a node is overutilized
 // At least one resource has to be above the high threshold
-func isNodeAboveTargetUtilization(usage NodeUsage, threshold map[v1.ResourceName]*resource.Quantity) bool {
+func isNodeAboveTargetUtilization(usage NodeUsage, threshold api.ReferencedResourceList) bool {
 	for name, nodeValue := range usage.usage {
 		// usage.highResourceThreshold[name] < nodeValue
 		if threshold[name].Cmp(*nodeValue) == -1 {
@@ -430,7 +430,7 @@ func isNodeAboveTargetUtilization(usage NodeUsage, threshold map[v1.ResourceName
 
 // isNodeWithLowUtilization checks if a node is underutilized
 // All resources have to be below the low threshold
-func isNodeWithLowUtilization(usage NodeUsage, threshold map[v1.ResourceName]*resource.Quantity) bool {
+func isNodeWithLowUtilization(usage NodeUsage, threshold api.ReferencedResourceList) bool {
 	for name, nodeValue := range usage.usage {
 		// usage.lowResourceThreshold[name] < nodeValue
 		if threshold[name].Cmp(*nodeValue) == -1 {
