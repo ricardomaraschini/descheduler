@@ -18,6 +18,7 @@ package api
 
 import (
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -129,3 +130,6 @@ type SecretReference struct {
 	// name is the name of the secret.
 	Name string
 }
+
+// ReferencedResourceList is an adaption of v1.ResourceList with resources as references
+type ReferencedResourceList = map[v1.ResourceName]*resource.Quantity
