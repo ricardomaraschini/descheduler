@@ -15,19 +15,10 @@ limitations under the License.
 
 package classifier
 
-import (
-	"fmt"
-)
-
-// ErrLimitsMismatch is returned when the amount of limits does not match the
-// amount of classifiers. Each classifier operates over a limit, so the amount
-// of classifiers must match the amount of limits.
-var ErrLimitsMismatch = fmt.Errorf("amount of limits must match the amount of classifiers")
-
 // Classifier is a function that classifies a resource usage based on a limit.
 // The function should return true if the resource usage matches the classifier
 // intent.
-type Classifier[V any] func(V, V) (bool, error)
+type Classifier[V any] func(V, V) bool
 
 // Comparer is a function that compares two objects. This function should return
 // -1 if the first object is less than the second, 0 if they are equal, and 1 if
@@ -53,14 +44,7 @@ type Limits[K comparable, V any] map[K][]V
 // and classifiers are provided, the returned slice will have n maps).
 func Classify[K comparable, V any](
 	values Values[K, V], limits Limits[K, V], classifiers ...Classifier[V],
-) ([]map[K]V, error) {
-	count := len(classifiers)
-	for _, limit := range limits {
-		if len(limit) != count {
-			return nil, ErrLimitsMismatch
-		}
-	}
-
+) []map[K]V {
 	result := make([]map[K]V, len(classifiers))
 	for i := range classifiers {
 		result[i] = make(map[K]V)
@@ -68,16 +52,18 @@ func Classify[K comparable, V any](
 
 	for index, usage := range values {
 		for i, limit := range limits[index] {
-			if done, err := classifiers[i](usage, limit); err != nil {
-				return nil, err
-			} else if done {
-				result[i][index] = usage
-				break
+			if len(classifiers) <= i {
+				continue
 			}
+			if !classifiers[i](usage, limit) {
+				continue
+			}
+			result[i][index] = usage
+			break
 		}
 	}
 
-	return result, nil
+	return result
 }
 
 // ForMap is a function that returns a classifier that compares all values in a
@@ -85,15 +71,15 @@ func Classify[K comparable, V any](
 // the map values. The returned Classifier will return true only if the
 // provided Comparer function returns a value less than 0 for all the values.
 func ForMap[K comparable, V any, M ~map[K]V](cmp Comparer[V]) Classifier[M] {
-	return func(data, limit M) (bool, error) {
+	return func(data, limit M) bool {
 		for idx, value := range data {
 			if _, ok := limit[idx]; !ok {
-				return false, fmt.Errorf("limit for %v not found", idx)
+				continue
 			}
 			if cmp(value, limit[idx]) >= 0 {
-				return false, nil
+				return false
 			}
 		}
-		return true, nil
+		return true
 	}
 }

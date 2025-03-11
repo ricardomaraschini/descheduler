@@ -16,7 +16,6 @@ limitations under the License.
 package classifier
 
 import (
-	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -31,12 +30,12 @@ import (
 // total for a given resource is not found. This function operates on Quantity
 // Value() for all the resources except CPU, where it uses MilliValue(). This
 // is here just to be used during testing.
-func ResourceUsageNormalizer(usages, totals v1.ResourceList) (api.ResourceThresholds, error) {
+func ResourceUsageNormalizer(usages, totals v1.ResourceList) api.ResourceThresholds {
 	result := api.ResourceThresholds{}
 	for rname, value := range usages {
 		total, ok := totals[rname]
 		if !ok {
-			return nil, fmt.Errorf("total for %v not found", rname)
+			continue
 		}
 
 		used, avail := value.Value(), total.Value()
@@ -47,7 +46,7 @@ func ResourceUsageNormalizer(usages, totals v1.ResourceList) (api.ResourceThresh
 		pct := math.Max(math.Min(float64(used)/float64(avail)*100, 100), 0)
 		result[rname] = api.Percentage(pct)
 	}
-	return result, nil
+	return result
 }
 
 func TestNormalizeSimple(t *testing.T) {
@@ -63,8 +62,8 @@ func TestNormalizeSimple(t *testing.T) {
 			usages:   map[string]float64{"cpu": 1},
 			totals:   map[string]float64{"cpu": 2},
 			expected: map[string]float64{"cpu": 0.5},
-			normalizer: func(usage, total float64) (float64, error) {
-				return usage / total, nil
+			normalizer: func(usage, total float64) float64 {
+				return usage / total
 			},
 		},
 		{
@@ -81,16 +80,13 @@ func TestNormalizeSimple(t *testing.T) {
 				"cpu": 0.5,
 				"mem": 0.6,
 			},
-			normalizer: func(usage, total float64) (float64, error) {
-				return usage / total, nil
+			normalizer: func(usage, total float64) float64 {
+				return usage / total
 			},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Normalize(tt.usages, tt.totals, tt.normalizer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			result := Normalize(tt.usages, tt.totals, tt.normalizer)
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Fatalf("unexpected result: %v", result)
 			}
@@ -247,10 +243,7 @@ func TestNormalize(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Normalize(tt.usages, tt.totals, tt.normalizer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			result := Normalize(tt.usages, tt.totals, tt.normalizer)
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Fatalf("unexpected result: %v", result)
 			}
@@ -364,11 +357,7 @@ func TestAverage(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			normalized, err := Normalize(tt.usage, tt.limits, ResourceUsageNormalizer)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			average := Average(normalized)
+			average := Average(Normalize(tt.usage, tt.limits, ResourceUsageNormalizer))
 			if !reflect.DeepEqual(average, tt.expected) {
 				t.Fatalf("unexpected result: %v, expected: %v", average, tt.expected)
 			}

@@ -16,8 +16,6 @@ limitations under the License.
 package classifier
 
 import (
-	"fmt"
-
 	"golang.org/x/exp/constraints"
 )
 
@@ -26,7 +24,7 @@ import (
 // that converts a memory usage from mb to % (the first argument would be
 // the memory usage in mb and the second argument would be the total memory
 // available in mb).
-type Normalizer[V, N any] func(V, V) (N, error)
+type Normalizer[V, N any] func(V, V) N
 
 // Number is an interface that represents a number. Represents things we
 // can do math operations on.
@@ -38,22 +36,17 @@ type Number interface {
 // example one may want to convert a set of memory usages from mb to %.
 // This function receives a set of usages, a set of totals, and a Normalizer
 // function. The function will return a map with the normalized values.
-func Normalize[K comparable, V, N any](usages, totals Values[K, V], fn Normalizer[V, N]) (map[K]N, error) {
+func Normalize[K comparable, V, N any](usages, totals Values[K, V], fn Normalizer[V, N]) map[K]N {
 	result := Values[K, N]{}
 	for key, value := range usages {
 		total, ok := totals[key]
 		if !ok {
-			return nil, fmt.Errorf("total for %v not found", key)
+			continue
 		}
 
-		norm, err := fn(value, total)
-		if err != nil {
-			return nil, fmt.Errorf("normalizing %v: %w", key, err)
-		}
-
-		result[key] = norm
+		result[key] = fn(value, total)
 	}
-	return result, nil
+	return result
 }
 
 // Average calculates the average of a set of values. This function receives
