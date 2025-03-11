@@ -16,13 +16,13 @@ limitations under the License.
 package classifier
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/descheduler/pkg/api"
 )
 
 func TestClassifySimple(t *testing.T) {
@@ -54,11 +54,11 @@ func TestClassifySimple(t *testing.T) {
 				{"node2": 8},
 			},
 			classifiers: []Classifier[int]{
-				func(usage, limit int) (bool, error) {
-					return usage < limit, nil
+				func(usage, limit int) bool {
+					return usage < limit
 				},
-				func(usage, limit int) (bool, error) {
-					return usage > limit, nil
+				func(usage, limit int) bool {
+					return usage > limit
 				},
 			},
 		},
@@ -102,35 +102,21 @@ func TestClassifySimple(t *testing.T) {
 				},
 			},
 			classifiers: []Classifier[int]{
-				func(usage, limit int) (bool, error) {
-					return usage < limit, nil
+				func(usage, limit int) bool {
+					return usage < limit
 				},
-				func(usage, limit int) (bool, error) {
-					return usage > limit, nil
+				func(usage, limit int) bool {
+					return usage > limit
 				},
 			},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Classify(tt.usage, tt.limits, tt.classifiers...)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
+			result := Classify(tt.usage, tt.limits, tt.classifiers...)
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Fatalf("unexpected result: %v", result)
 			}
 		})
-	}
-}
-
-func TestClassify_invalid(t *testing.T) {
-	_, err := Classify(
-		map[string]int{"node1": 2},
-		map[string][]int{"node1": {4, 8}},
-	)
-	if !errors.Is(err, ErrLimitsMismatch) {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
 
@@ -252,11 +238,7 @@ func TestClassify_pointers(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Classify(tt.usage, tt.limits, tt.classifiers...)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
+			result := Classify(tt.usage, tt.limits, tt.classifiers...)
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Fatalf("unexpected result: %v", result)
 			}
@@ -306,6 +288,128 @@ func TestClassify(t *testing.T) {
 				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
+					},
+				),
+			},
+		},
+		{
+			name: "less classifiers than limits",
+			usage: map[string]v1.ResourceList{
+				"node1": {
+					v1.ResourceCPU:    resource.MustParse("2"),
+					v1.ResourceMemory: resource.MustParse("2Gi"),
+				},
+				"node2": {
+					v1.ResourceCPU:    resource.MustParse("5"),
+					v1.ResourceMemory: resource.MustParse("5Gi"),
+				},
+				"node3": {
+					v1.ResourceCPU:    resource.MustParse("8"),
+					v1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+			limits: map[string][]v1.ResourceList{
+				"node1": {
+					{
+						v1.ResourceCPU:    resource.MustParse("4"),
+						v1.ResourceMemory: resource.MustParse("4Gi"),
+					},
+					{
+						v1.ResourceCPU:    resource.MustParse("16"),
+						v1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+				},
+				"node2": {
+					{
+						v1.ResourceCPU:    resource.MustParse("4"),
+						v1.ResourceMemory: resource.MustParse("4Gi"),
+					},
+					{
+						v1.ResourceCPU:    resource.MustParse("16"),
+						v1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+				},
+				"node3": {
+					{
+						v1.ResourceCPU:    resource.MustParse("4"),
+						v1.ResourceMemory: resource.MustParse("4Gi"),
+					},
+					{
+						v1.ResourceCPU:    resource.MustParse("16"),
+						v1.ResourceMemory: resource.MustParse("16Gi"),
+					},
+				},
+			},
+			expected: []map[string]v1.ResourceList{
+				{
+					"node1": {
+						v1.ResourceCPU:    resource.MustParse("2"),
+						v1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
+			},
+			classifiers: []Classifier[v1.ResourceList]{
+				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+					func(usage, limit resource.Quantity) int {
+						return usage.Cmp(limit)
+					},
+				),
+			},
+		},
+		{
+			name: "more classifiers than limits",
+			usage: map[string]v1.ResourceList{
+				"node1": {
+					v1.ResourceCPU:    resource.MustParse("20"),
+					v1.ResourceMemory: resource.MustParse("20"),
+				},
+				"node2": {
+					v1.ResourceCPU:    resource.MustParse("50"),
+					v1.ResourceMemory: resource.MustParse("50"),
+				},
+				"node3": {
+					v1.ResourceCPU:    resource.MustParse("80"),
+					v1.ResourceMemory: resource.MustParse("80"),
+				},
+			},
+			limits: map[string][]v1.ResourceList{
+				"node1": {
+					{
+						v1.ResourceCPU:    resource.MustParse("30"),
+						v1.ResourceMemory: resource.MustParse("30"),
+					},
+				},
+				"node2": {
+					{
+						v1.ResourceCPU:    resource.MustParse("30"),
+						v1.ResourceMemory: resource.MustParse("30"),
+					},
+				},
+				"node3": {
+					{
+						v1.ResourceCPU:    resource.MustParse("30"),
+						v1.ResourceMemory: resource.MustParse("30"),
+					},
+				},
+			},
+			expected: []map[string]v1.ResourceList{
+				{
+					"node1": {
+						v1.ResourceCPU:    resource.MustParse("20"),
+						v1.ResourceMemory: resource.MustParse("20"),
+					},
+				},
+				{},
+			},
+			classifiers: []Classifier[v1.ResourceList]{
+				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+					func(usage, limit resource.Quantity) int {
+						return usage.Cmp(limit)
+					},
+				),
+				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+					func(usage, limit resource.Quantity) int {
+						return limit.Cmp(usage)
 					},
 				),
 			},
@@ -627,13 +731,221 @@ func TestClassify(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Classify(tt.usage, tt.limits, tt.classifiers...)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
+			result := Classify(tt.usage, tt.limits, tt.classifiers...)
 			if !reflect.DeepEqual(result, tt.expected) {
 				t.Fatalf("unexpected result: %v", result)
+			}
+		})
+	}
+}
+
+func TestNormalizeAndClassify(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		usage       map[string]v1.ResourceList
+		totals      map[string]v1.ResourceList
+		thresholds  map[string][]api.ResourceThresholds
+		expected    []map[string]api.ResourceThresholds
+		classifiers []Classifier[api.ResourceThresholds]
+	}{
+		{
+			name: "happy path test",
+			usage: map[string]v1.ResourceList{
+				"node1": {
+					// underutilized on cpu and memory.
+					v1.ResourceCPU:    resource.MustParse("10"),
+					v1.ResourceMemory: resource.MustParse("10"),
+				},
+				"node2": {
+					// overutilized on cpu and memory.
+					v1.ResourceCPU:    resource.MustParse("90"),
+					v1.ResourceMemory: resource.MustParse("90"),
+				},
+				"node3": {
+					// properly utilized on cpu and memory.
+					v1.ResourceCPU:    resource.MustParse("50"),
+					v1.ResourceMemory: resource.MustParse("50"),
+				},
+				"node4": {
+					// underutilized on cpu and overutilized on memory.
+					v1.ResourceCPU:    resource.MustParse("10"),
+					v1.ResourceMemory: resource.MustParse("90"),
+				},
+			},
+			totals: map[string]v1.ResourceList{
+				"node1": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node2": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node3": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node4": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+			},
+			thresholds: map[string][]api.ResourceThresholds{
+				"node1": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node2": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node3": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node4": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+			},
+			expected: []map[string]api.ResourceThresholds{
+				{
+					"node1": {v1.ResourceCPU: 10, v1.ResourceMemory: 10},
+				},
+				{
+					"node2": {v1.ResourceCPU: 90, v1.ResourceMemory: 90},
+				},
+			},
+			classifiers: []Classifier[api.ResourceThresholds]{
+				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+					func(usage, limit api.Percentage) int {
+						return int(usage - limit)
+					},
+				),
+				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+					func(usage, limit api.Percentage) int {
+						return int(limit - usage)
+					},
+				),
+			},
+		},
+		{
+			name: "three thresholds",
+			usage: map[string]v1.ResourceList{
+				"node1": {
+					// match for the first classifier.
+					v1.ResourceCPU:    resource.MustParse("10"),
+					v1.ResourceMemory: resource.MustParse("10"),
+				},
+				"node2": {
+					// match for the third classifier.
+					v1.ResourceCPU:    resource.MustParse("90"),
+					v1.ResourceMemory: resource.MustParse("90"),
+				},
+				"node3": {
+					// match fo the second classifier.
+					v1.ResourceCPU:    resource.MustParse("40"),
+					v1.ResourceMemory: resource.MustParse("40"),
+				},
+				"node4": {
+					// matches no classifier.
+					v1.ResourceCPU:    resource.MustParse("10"),
+					v1.ResourceMemory: resource.MustParse("90"),
+				},
+				"node5": {
+					// match for the first classifier.
+					v1.ResourceCPU:    resource.MustParse("11"),
+					v1.ResourceMemory: resource.MustParse("18"),
+				},
+			},
+			totals: map[string]v1.ResourceList{
+				"node1": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node2": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node3": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node4": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+				"node5": {
+					v1.ResourceCPU:    resource.MustParse("100"),
+					v1.ResourceMemory: resource.MustParse("100"),
+				},
+			},
+			thresholds: map[string][]api.ResourceThresholds{
+				"node1": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 50, v1.ResourceMemory: 50},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node2": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 50, v1.ResourceMemory: 50},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node3": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 50, v1.ResourceMemory: 50},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node4": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 50, v1.ResourceMemory: 50},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+				"node5": {
+					{v1.ResourceCPU: 20, v1.ResourceMemory: 20},
+					{v1.ResourceCPU: 50, v1.ResourceMemory: 50},
+					{v1.ResourceCPU: 80, v1.ResourceMemory: 80},
+				},
+			},
+			expected: []map[string]api.ResourceThresholds{
+				{
+					"node1": {v1.ResourceCPU: 10, v1.ResourceMemory: 10},
+					"node5": {v1.ResourceCPU: 11, v1.ResourceMemory: 18},
+				},
+				{
+					"node3": {v1.ResourceCPU: 40, v1.ResourceMemory: 40},
+				},
+				{
+					"node2": {v1.ResourceCPU: 90, v1.ResourceMemory: 90},
+				},
+			},
+			classifiers: []Classifier[api.ResourceThresholds]{
+				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+					func(usage, limit api.Percentage) int {
+						return int(usage - limit)
+					},
+				),
+				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+					func(usage, limit api.Percentage) int {
+						return int(usage - limit)
+					},
+				),
+				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+					func(usage, limit api.Percentage) int {
+						return int(limit - usage)
+					},
+				),
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			res := Classify(
+				Normalize(tt.usage, tt.totals, ResourceUsageNormalizer),
+				tt.thresholds,
+				tt.classifiers...,
+			)
+			if !reflect.DeepEqual(res, tt.expected) {
+				t.Fatalf("unexpected result: %v, expecting: %v", res, tt.expected)
 			}
 		})
 	}
