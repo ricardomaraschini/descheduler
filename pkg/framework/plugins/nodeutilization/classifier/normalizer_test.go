@@ -16,6 +16,7 @@ limitations under the License.
 package classifier
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -169,30 +170,22 @@ func TestNormalize(t *testing.T) {
 					v1.ResourcePods:   resource.MustParse("170"),
 				},
 			},
-			totals: map[string]v1.ResourceList{
-				"node1": {
+			totals: Replicate(
+				[]string{"node1", "node2"},
+				v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("100"),
 					v1.ResourceMemory: resource.MustParse("100"),
 					v1.ResourcePods:   resource.MustParse("100"),
 				},
-				"node2": {
-					v1.ResourceCPU:    resource.MustParse("100"),
-					v1.ResourceMemory: resource.MustParse("100"),
-					v1.ResourcePods:   resource.MustParse("100"),
-				},
-			},
-			expected: map[string]api.ResourceThresholds{
-				"node1": {
+			),
+			expected: Replicate(
+				[]string{"node1", "node2"},
+				api.ResourceThresholds{
 					v1.ResourceCPU:    100,
 					v1.ResourceMemory: 100,
 					v1.ResourcePods:   100,
 				},
-				"node2": {
-					v1.ResourceCPU:    100,
-					v1.ResourceMemory: 100,
-					v1.ResourcePods:   100,
-				},
-			},
+			),
 			normalizer: ResourceUsageNormalizer,
 		},
 		{
@@ -305,18 +298,14 @@ func TestAverage(t *testing.T) {
 					v1.ResourcePods:   resource.MustParse("20"),
 				},
 			},
-			limits: map[string]v1.ResourceList{
-				"node1": {
+			limits: Replicate(
+				[]string{"node1", "node2"},
+				v1.ResourceList{
 					v1.ResourceCPU:    resource.MustParse("100"),
 					v1.ResourceMemory: resource.MustParse("100"),
 					v1.ResourcePods:   resource.MustParse("10000"),
 				},
-				"node2": {
-					v1.ResourceCPU:    resource.MustParse("100"),
-					v1.ResourceMemory: resource.MustParse("100"),
-					v1.ResourcePods:   resource.MustParse("10000"),
-				},
-			},
+			),
 			expected: api.ResourceThresholds{
 				v1.ResourceCPU:    15,
 				v1.ResourceMemory: 70,
@@ -360,6 +349,131 @@ func TestAverage(t *testing.T) {
 			average := Average(Normalize(tt.usage, tt.limits, ResourceUsageNormalizer))
 			if !reflect.DeepEqual(average, tt.expected) {
 				t.Fatalf("unexpected result: %v, expected: %v", average, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDeviate(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		data       api.ResourceThresholds
+		deviations []api.ResourceThresholds
+		expected   []api.ResourceThresholds
+	}{
+		{
+			name: "single deviation",
+			data: api.ResourceThresholds{
+				v1.ResourceCPU:    50,
+				v1.ResourceMemory: 50,
+				v1.ResourcePods:   50,
+			},
+			deviations: []api.ResourceThresholds{
+				{
+					v1.ResourceCPU:    1,
+					v1.ResourceMemory: 1,
+					v1.ResourcePods:   1,
+				},
+				{
+					v1.ResourceCPU:    2,
+					v1.ResourceMemory: 2,
+					v1.ResourcePods:   2,
+				},
+				{
+					v1.ResourceCPU:    3,
+					v1.ResourceMemory: 3,
+					v1.ResourcePods:   3,
+				},
+			},
+			expected: []api.ResourceThresholds{
+				{
+					v1.ResourceCPU:    51,
+					v1.ResourceMemory: 51,
+					v1.ResourcePods:   51,
+				},
+				{
+					v1.ResourceCPU:    52,
+					v1.ResourceMemory: 52,
+					v1.ResourcePods:   52,
+				},
+				{
+					v1.ResourceCPU:    53,
+					v1.ResourceMemory: 53,
+					v1.ResourcePods:   53,
+				},
+			},
+		},
+		{
+			name: "deviate with negative values",
+			data: api.ResourceThresholds{
+				v1.ResourceCPU:    50,
+				v1.ResourceMemory: 50,
+				v1.ResourcePods:   50,
+			},
+			deviations: []api.ResourceThresholds{
+				{
+					v1.ResourceCPU:    -2,
+					v1.ResourceMemory: -2,
+					v1.ResourcePods:   -2,
+				},
+				{
+					v1.ResourceCPU:    -1,
+					v1.ResourceMemory: -1,
+					v1.ResourcePods:   -1,
+				},
+				{
+					v1.ResourceCPU:    0,
+					v1.ResourceMemory: 0,
+					v1.ResourcePods:   0,
+				},
+				{
+					v1.ResourceCPU:    1,
+					v1.ResourceMemory: 1,
+					v1.ResourcePods:   1,
+				},
+				{
+					v1.ResourceCPU:    2,
+					v1.ResourceMemory: 2,
+					v1.ResourcePods:   2,
+				},
+			},
+			expected: []api.ResourceThresholds{
+				{
+					v1.ResourceCPU:    48,
+					v1.ResourceMemory: 48,
+					v1.ResourcePods:   48,
+				},
+				{
+					v1.ResourceCPU:    49,
+					v1.ResourceMemory: 49,
+					v1.ResourcePods:   49,
+				},
+				{
+					v1.ResourceCPU:    50,
+					v1.ResourceMemory: 50,
+					v1.ResourcePods:   50,
+				},
+				{
+					v1.ResourceCPU:    51,
+					v1.ResourceMemory: 51,
+					v1.ResourcePods:   51,
+				},
+				{
+					v1.ResourceCPU:    52,
+					v1.ResourceMemory: 52,
+					v1.ResourcePods:   52,
+				},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Deviate(tt.data, tt.deviations)
+			if len(result) != len(tt.deviations) {
+				t.Fatalf("unexpected result: %v", result)
+			}
+			if !reflect.DeepEqual(result, tt.expected) {
+				fmt.Printf("%T, %T\n", result, tt.expected)
+				t.Fatalf("unexpected result: %v", result)
 			}
 		})
 	}

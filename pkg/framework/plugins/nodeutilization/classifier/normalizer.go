@@ -49,6 +49,31 @@ func Normalize[K comparable, V, N any](usages, totals Values[K, V], fn Normalize
 	return result
 }
 
+// Replicate replicates the provide value for each key in the provided slice.
+// Returns a map with the keys and the provided value.
+func Replicate[K comparable, V any](keys []K, value V) map[K]V {
+	result := map[K]V{}
+	for _, key := range keys {
+		result[key] = value
+	}
+	return result
+}
+
+// Deviate receives an object and a list of "deviations", returns an slice with
+// returns an slice of the same input where the internal value is added to each
+// deviation. Negative deviations are allowed.
+func Deviate[K comparable, N Number, V ~map[K]N](values V, deviations []V) []V {
+	result := []V{}
+	for _, dev := range deviations {
+		current := V{}
+		for name, value := range values {
+			current[name] = value + dev[name]
+		}
+		result = append(result, current)
+	}
+	return result
+}
+
 // Average calculates the average of a set of values. This function receives
 // a map of values and returns the average of all the values. Average expects
 // the values to represent the same unit of measure. You can use this function
