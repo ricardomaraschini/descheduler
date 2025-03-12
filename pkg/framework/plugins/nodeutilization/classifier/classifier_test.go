@@ -30,7 +30,7 @@ func TestClassifySimple(t *testing.T) {
 		name        string
 		usage       map[string]int
 		limits      map[string][]int
-		classifiers []Classifier[int]
+		classifiers []Classifier[string, int]
 		expected    []map[string]int
 	}{
 		{
@@ -53,11 +53,11 @@ func TestClassifySimple(t *testing.T) {
 				{"node1": 2},
 				{"node2": 8},
 			},
-			classifiers: []Classifier[int]{
-				func(usage, limit int) bool {
+			classifiers: []Classifier[string, int]{
+				func(_ string, usage, limit int) bool {
 					return usage < limit
 				},
-				func(usage, limit int) bool {
+				func(_ string, usage, limit int) bool {
 					return usage > limit
 				},
 			},
@@ -101,11 +101,11 @@ func TestClassifySimple(t *testing.T) {
 					"node9": 8,
 				},
 			},
-			classifiers: []Classifier[int]{
-				func(usage, limit int) bool {
+			classifiers: []Classifier[string, int]{
+				func(_ string, usage, limit int) bool {
 					return usage < limit
 				},
-				func(usage, limit int) bool {
+				func(_ string, usage, limit int) bool {
 					return usage > limit
 				},
 			},
@@ -125,7 +125,7 @@ func TestClassify_pointers(t *testing.T) {
 		name        string
 		usage       map[string]map[v1.ResourceName]*resource.Quantity
 		limits      map[string][]map[v1.ResourceName]*resource.Quantity
-		classifiers []Classifier[map[v1.ResourceName]*resource.Quantity]
+		classifiers []Classifier[string, map[v1.ResourceName]*resource.Quantity]
 		expected    []map[string]map[v1.ResourceName]*resource.Quantity
 	}{
 		{
@@ -158,8 +158,8 @@ func TestClassify_pointers(t *testing.T) {
 					},
 				},
 			},
-			classifiers: []Classifier[map[v1.ResourceName]*resource.Quantity]{
-				ForMap[v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
+			classifiers: []Classifier[string, map[v1.ResourceName]*resource.Quantity]{
+				ForMap[string, v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
 					func(usage, limit *resource.Quantity) int {
 						return usage.Cmp(*limit)
 					},
@@ -223,13 +223,13 @@ func TestClassify_pointers(t *testing.T) {
 				},
 				{},
 			},
-			classifiers: []Classifier[map[v1.ResourceName]*resource.Quantity]{
-				ForMap[v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
+			classifiers: []Classifier[string, map[v1.ResourceName]*resource.Quantity]{
+				ForMap[string, v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
 					func(usage, limit *resource.Quantity) int {
 						return usage.Cmp(*limit)
 					},
 				),
-				ForMap[v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
+				ForMap[string, v1.ResourceName, *resource.Quantity, map[v1.ResourceName]*resource.Quantity](
 					func(usage, limit *resource.Quantity) int {
 						return limit.Cmp(*usage)
 					},
@@ -251,7 +251,7 @@ func TestClassify(t *testing.T) {
 		name        string
 		usage       map[string]v1.ResourceList
 		limits      map[string][]v1.ResourceList
-		classifiers []Classifier[v1.ResourceList]
+		classifiers []Classifier[string, v1.ResourceList]
 		expected    []map[string]v1.ResourceList
 	}{
 		{
@@ -284,8 +284,8 @@ func TestClassify(t *testing.T) {
 					},
 				},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
@@ -348,8 +348,8 @@ func TestClassify(t *testing.T) {
 					},
 				},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
@@ -401,13 +401,13 @@ func TestClassify(t *testing.T) {
 				},
 				{},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -471,13 +471,13 @@ func TestClassify(t *testing.T) {
 				},
 				{},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -550,13 +550,13 @@ func TestClassify(t *testing.T) {
 					},
 				},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -601,13 +601,13 @@ func TestClassify(t *testing.T) {
 				{},
 				{},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -638,13 +638,13 @@ func TestClassify(t *testing.T) {
 				{},
 				{},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -716,13 +716,13 @@ func TestClassify(t *testing.T) {
 					"node7": {v1.ResourceCPU: resource.MustParse("8")},
 				},
 			},
-			classifiers: []Classifier[v1.ResourceList]{
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+			classifiers: []Classifier[string, v1.ResourceList]{
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return usage.Cmp(limit)
 					},
 				),
-				ForMap[v1.ResourceName, resource.Quantity, v1.ResourceList](
+				ForMap[string, v1.ResourceName, resource.Quantity, v1.ResourceList](
 					func(usage, limit resource.Quantity) int {
 						return limit.Cmp(usage)
 					},
@@ -746,7 +746,7 @@ func TestNormalizeAndClassify(t *testing.T) {
 		totals      map[string]v1.ResourceList
 		thresholds  map[string][]api.ResourceThresholds
 		expected    []map[string]api.ResourceThresholds
-		classifiers []Classifier[api.ResourceThresholds]
+		classifiers []Classifier[string, api.ResourceThresholds]
 	}{
 		{
 			name: "happy path test",
@@ -794,13 +794,13 @@ func TestNormalizeAndClassify(t *testing.T) {
 					"node2": {v1.ResourceCPU: 90, v1.ResourceMemory: 90},
 				},
 			},
-			classifiers: []Classifier[api.ResourceThresholds]{
-				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+			classifiers: []Classifier[string, api.ResourceThresholds]{
+				ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 					func(usage, limit api.Percentage) int {
 						return int(usage - limit)
 					},
 				),
-				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+				ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 					func(usage, limit api.Percentage) int {
 						return int(limit - usage)
 					},
@@ -863,18 +863,18 @@ func TestNormalizeAndClassify(t *testing.T) {
 					"node2": {v1.ResourceCPU: 90, v1.ResourceMemory: 90},
 				},
 			},
-			classifiers: []Classifier[api.ResourceThresholds]{
-				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+			classifiers: []Classifier[string, api.ResourceThresholds]{
+				ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 					func(usage, limit api.Percentage) int {
 						return int(usage - limit)
 					},
 				),
-				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+				ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 					func(usage, limit api.Percentage) int {
 						return int(usage - limit)
 					},
 				),
-				ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+				ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 					func(usage, limit api.Percentage) int {
 						return int(limit - usage)
 					},
@@ -971,12 +971,12 @@ func TestUsingDeviationThresholds(t *testing.T) {
 	// (55%) are overutilized and nodes in between are properly utilized.
 	result := Classify(
 		usage, thresholds,
-		ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+		ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 			func(usage, limit api.Percentage) int {
 				return int(usage - limit)
 			},
 		),
-		ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+		ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 			func(usage, limit api.Percentage) int {
 				return int(limit - usage)
 			},
@@ -1066,12 +1066,12 @@ func TestUsingDeviationThresholdsWithPointers(t *testing.T) {
 
 	result := Classify(
 		usage, thresholds,
-		ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+		ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 			func(usage, limit api.Percentage) int {
 				return int(usage - limit)
 			},
 		),
-		ForMap[v1.ResourceName, api.Percentage, api.ResourceThresholds](
+		ForMap[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
 			func(usage, limit api.Percentage) int {
 				return int(limit - usage)
 			},
