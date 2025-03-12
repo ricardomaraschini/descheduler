@@ -18,7 +18,7 @@ package classifier
 // Classifier is a function that classifies a resource usage based on a limit.
 // The function should return true if the resource usage matches the classifier
 // intent.
-type Classifier[V any] func(V, V) bool
+type Classifier[K comparable, V any] func(K, V, V) bool
 
 // Comparer is a function that compares two objects. This function should return
 // -1 if the first object is less than the second, 0 if they are equal, and 1 if
@@ -43,7 +43,7 @@ type Limits[K comparable, V any] map[K][]V
 // returned slice correspond to one of the classifiers (e.g. if n limits
 // and classifiers are provided, the returned slice will have n maps).
 func Classify[K comparable, V any](
-	values Values[K, V], limits Limits[K, V], classifiers ...Classifier[V],
+	values Values[K, V], limits Limits[K, V], classifiers ...Classifier[K, V],
 ) []map[K]V {
 	result := make([]map[K]V, len(classifiers))
 	for i := range classifiers {
@@ -55,7 +55,7 @@ func Classify[K comparable, V any](
 			if len(classifiers) <= i {
 				continue
 			}
-			if !classifiers[i](usage, limit) {
+			if !classifiers[i](index, usage, limit) {
 				continue
 			}
 			result[i][index] = usage
@@ -70,14 +70,13 @@ func Classify[K comparable, V any](
 // map. The function receives a Comparer function that is used to compare all
 // the map values. The returned Classifier will return true only if the
 // provided Comparer function returns a value less than 0 for all the values.
-func ForMap[K comparable, V any, M ~map[K]V](cmp Comparer[V]) Classifier[M] {
-	return func(data, limit M) bool {
-		for idx, value := range data {
-			if _, ok := limit[idx]; !ok {
-				continue
-			}
-			if cmp(value, limit[idx]) >= 0 {
-				return false
+func ForMap[K, I comparable, V any, M ~map[I]V](cmp Comparer[V]) Classifier[K, M] {
+	return func(_ K, usages, limits M) bool {
+		for idx, usage := range usages {
+			if limit, ok := limits[idx]; ok {
+				if cmp(usage, limit) >= 0 {
+					return false
+				}
 			}
 		}
 		return true
