@@ -17,10 +17,13 @@ limitations under the License.
 package api
 
 import (
+	"math"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -75,6 +78,25 @@ type (
 	ResourceThresholds map[v1.ResourceName]Percentage
 )
 
+// Negative returns a new ResourceThresholds with all its values negated.
+func (r ResourceThresholds) Negative() ResourceThresholds {
+	reversed := make(ResourceThresholds, len(r))
+	for k, v := range r {
+		reversed[k] = -v
+	}
+	return reversed
+}
+
+// Round returns a new ResourceThresholds with all its values rounded according
+// to math.Round.
+func (r ResourceThresholds) Round() ResourceThresholds {
+	rounded := make(ResourceThresholds, len(r))
+	for k, v := range r {
+		rounded[k] = Percentage(math.Round(float64(v)))
+	}
+	return rounded
+}
+
 type PriorityThreshold struct {
 	Value *int32 `json:"value"`
 	Name  string `json:"name"`
@@ -114,3 +136,31 @@ type MetricsCollector struct {
 
 // ReferencedResourceList is an adaption of v1.ResourceList with resources as references
 type ReferencedResourceList = map[v1.ResourceName]*resource.Quantity
+
+// ReferencedResourceListForNodesCapacity returns a ReferencedResourceList for
+// the capacity of a list of nodes. If allocatable resources are present, they
+// are used instead of capacity.
+func ReferencedResourceListForNodesCapacity(node []*v1.Node) map[string]ReferencedResourceList {
+	capacities := map[string]ReferencedResourceList{}
+	for _, n := range node {
+		capacities[n.Name] = ReferencedResourceListForNodeCapacity(n)
+	}
+	return capacities
+}
+
+// ReferencedResourceListForNodeCapacity returns a ReferencedResourceList for
+// the capacity of a node. If allocatable resources are present, they are used
+// instead of capacity.
+func ReferencedResourceListForNodeCapacity(node *v1.Node) ReferencedResourceList {
+	capacity := node.Status.Capacity
+	if len(node.Status.Allocatable) > 0 {
+		capacity = node.Status.Allocatable
+	}
+
+	referenced := ReferencedResourceList{}
+	for name, quantity := range capacity {
+		referenced[name] = ptr.To(quantity)
+	}
+
+	return referenced
+}

@@ -17,7 +17,6 @@ limitations under the License.
 package nodeutilization
 
 import (
-	"math"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
@@ -55,45 +54,6 @@ var (
 	highPriority     = int32(10000)
 	extendedResource = v1.ResourceName("example.com/foo")
 )
-
-func TestResourceUsagePercentages(t *testing.T) {
-	resourceUsagePercentage := resourceUsagePercentages(
-		api.ReferencedResourceList{
-			v1.ResourceCPU:    resource.NewMilliQuantity(1220, resource.DecimalSI),
-			v1.ResourceMemory: resource.NewQuantity(3038982964, resource.BinarySI),
-			v1.ResourcePods:   resource.NewQuantity(11, resource.BinarySI),
-		},
-		&v1.Node{
-			Status: v1.NodeStatus{
-				Capacity: v1.ResourceList{
-					v1.ResourceCPU:    *resource.NewMilliQuantity(2000, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(3977868*1024, resource.BinarySI),
-					v1.ResourcePods:   *resource.NewQuantity(29, resource.BinarySI),
-				},
-				Allocatable: v1.ResourceList{
-					v1.ResourceCPU:    *resource.NewMilliQuantity(1930, resource.DecimalSI),
-					v1.ResourceMemory: *resource.NewQuantity(3287692*1024, resource.BinarySI),
-					v1.ResourcePods:   *resource.NewQuantity(29, resource.BinarySI),
-				},
-			},
-		},
-		true,
-	)
-
-	expectedUsageInIntPercentage := map[v1.ResourceName]float64{
-		v1.ResourceCPU:    63,
-		v1.ResourceMemory: 90,
-		v1.ResourcePods:   37,
-	}
-
-	for resourceName, percentage := range expectedUsageInIntPercentage {
-		if math.Floor(float64(resourceUsagePercentage[resourceName])) != percentage {
-			t.Errorf("Incorrect percentange computation, expected %v, got math.Floor(%v) instead", percentage, resourceUsagePercentage[resourceName])
-		}
-	}
-
-	t.Logf("resourceUsagePercentage: %#v\n", resourceUsagePercentage)
-}
 
 func TestSortNodesByUsage(t *testing.T) {
 	tests := []struct {

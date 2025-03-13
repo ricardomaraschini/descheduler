@@ -102,11 +102,18 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 	}
 
 	nodesMap, nodesUsageMap, podListMap := getNodeUsageSnapshot(nodes, h.usageClient)
-	nodeThresholdsMap := getStaticNodeThresholds(nodes, h.args.Thresholds, h.targetThresholds)
-	nodesUsageAsNodeThresholdsMap := nodeUsageToResourceThresholds(nodesUsageMap, nodesMap)
+
+	usage, thresholds := AssessNodesUsagesAndThresholds(
+		nodesUsageMap,
+		api.ReferencedResourceListForNodesCapacity(nodes),
+		h.args.Thresholds,
+		h.targetThresholds,
+		false,
+	)
+
 	nodeGroups := classifyNodeUsage(
-		nodesUsageAsNodeThresholdsMap,
-		nodeThresholdsMap,
+		usage,
+		thresholds,
 		[]classifierFnc{
 			// underutilized nodes
 			func(nodeName string, usage, threshold api.ResourceThresholds) bool {
@@ -128,7 +135,12 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 	category := []string{"underutilized", "overutilized"}
 	for i := range nodeGroups {
 		for nodeName := range nodeGroups[i] {
-			klog.InfoS("Node is "+category[i], "node", klog.KObj(nodesMap[nodeName]), "usage", nodesUsageMap[nodeName], "usagePercentage", resourceUsagePercentages(nodesUsageMap[nodeName], nodesMap[nodeName], true))
+			klog.InfoS(
+				fmt.Sprintf("Node is %s", category[i]),
+				"node", klog.KObj(nodesMap[nodeName]),
+				"usage", nodesUsageMap[nodeName],
+				"usagePercentage", usage[nodeName].Round(),
+			)
 			nodeInfos[i] = append(nodeInfos[i], NodeInfo{
 				NodeUsage: NodeUsage{
 					node:    nodesMap[nodeName],
@@ -136,8 +148,8 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 					allPods: podListMap[nodeName],
 				},
 				thresholds: NodeThresholds{
-					lowResourceThreshold:  resourceThresholdsToNodeUsage(nodeThresholdsMap[nodeName][0], nodesMap[nodeName]),
-					highResourceThreshold: resourceThresholdsToNodeUsage(nodeThresholdsMap[nodeName][1], nodesMap[nodeName]),
+					lowResourceThreshold:  resourceThresholdsToNodeUsage(thresholds[nodeName][0], nodesMap[nodeName]),
+					highResourceThreshold: resourceThresholdsToNodeUsage(thresholds[nodeName][1], nodesMap[nodeName]),
 				},
 			})
 		}

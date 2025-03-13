@@ -18,6 +18,7 @@ package nodeutilization
 
 import (
 	"context"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -31,6 +32,7 @@ import (
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/normalizer"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 	"sigs.k8s.io/descheduler/pkg/utils"
 )
@@ -83,74 +85,6 @@ const (
 	// MaxResourcePercentage is the maximum value of a resource's percentage
 	MaxResourcePercentage = 100
 )
-
-func normalizePercentage(percent api.Percentage) api.Percentage {
-	if percent > MaxResourcePercentage {
-		return MaxResourcePercentage
-	}
-	if percent < MinResourcePercentage {
-		return MinResourcePercentage
-	}
-	return percent
-}
-
-func getNodeThresholdsFromAverageNodeUsage(
-	nodes []*v1.Node,
-	usageClient usageClient,
-	lowSpan, highSpan api.ResourceThresholds,
-) map[string][]api.ResourceThresholds {
-	total := api.ResourceThresholds{}
-	average := api.ResourceThresholds{}
-	numberOfNodes := len(nodes)
-	for _, node := range nodes {
-		usage := usageClient.nodeUtilization(node.Name)
-		nodeCapacity := node.Status.Capacity
-		if len(node.Status.Allocatable) > 0 {
-			nodeCapacity = node.Status.Allocatable
-		}
-		for resource, value := range usage {
-			nodeCapacityValue := nodeCapacity[resource]
-			if resource == v1.ResourceCPU {
-				total[resource] += api.Percentage(value.MilliValue()) / api.Percentage(nodeCapacityValue.MilliValue()) * 100.0
-			} else {
-				total[resource] += api.Percentage(value.Value()) / api.Percentage(nodeCapacityValue.Value()) * 100.0
-			}
-		}
-	}
-	lowThreshold, highThreshold := api.ResourceThresholds{}, api.ResourceThresholds{}
-	for resource, value := range total {
-		average[resource] = value / api.Percentage(numberOfNodes)
-		// If either of the spans are 0, ignore the resource. I.e. 0%:5% is invalid.
-		// Any zero span signifies a resource is either not set or is to be ignored.
-		if lowSpan[resource] == MinResourcePercentage || highSpan[resource] == MinResourcePercentage {
-			lowThreshold[resource] = 1
-			highThreshold[resource] = 1
-		} else {
-			lowThreshold[resource] = normalizePercentage(average[resource] - lowSpan[resource])
-			highThreshold[resource] = normalizePercentage(average[resource] + highSpan[resource])
-		}
-	}
-
-	nodeThresholds := make(map[string][]api.ResourceThresholds)
-	for _, node := range nodes {
-		nodeThresholds[node.Name] = []api.ResourceThresholds{
-			lowThreshold,
-			highThreshold,
-		}
-	}
-	return nodeThresholds
-}
-
-func getStaticNodeThresholds(
-	nodes []*v1.Node,
-	thresholdsList ...api.ResourceThresholds,
-) map[string][]api.ResourceThresholds {
-	nodeThresholds := make(map[string][]api.ResourceThresholds)
-	for _, node := range nodes {
-		nodeThresholds[node.Name] = append([]api.ResourceThresholds{}, slices.Clone(thresholdsList)...)
-	}
-	return nodeThresholds
-}
 
 // getNodeUsageSnapshot separates the snapshot into easily accesible
 // data chunks so the node usage can be processed separately.
@@ -209,38 +143,6 @@ func resourceThresholdsToNodeUsage(resourceThresholds api.ResourceThresholds, no
 	}
 
 	return nodeUsage
-}
-
-func roundTo2Decimals(percentage float64) float64 {
-	return math.Round(percentage*100) / 100
-}
-
-func resourceUsagePercentages(nodeUsage api.ReferencedResourceList, node *v1.Node, round bool) api.ResourceThresholds {
-	nodeCapacity := node.Status.Capacity
-	if len(node.Status.Allocatable) > 0 {
-		nodeCapacity = node.Status.Allocatable
-	}
-
-	resourceUsagePercentage := api.ResourceThresholds{}
-	for resourceName, resourceUsage := range nodeUsage {
-		cap := nodeCapacity[resourceName]
-		if !cap.IsZero() {
-			value := 100 * float64(resourceUsage.MilliValue()) / float64(cap.MilliValue())
-			if round {
-				value = roundTo2Decimals(float64(value))
-			}
-			resourceUsagePercentage[resourceName] = api.Percentage(value)
-		}
-	}
-	return resourceUsagePercentage
-}
-
-func nodeUsageToResourceThresholds(nodeUsage map[string]api.ReferencedResourceList, nodes map[string]*v1.Node) map[string]api.ResourceThresholds {
-	resourceThresholds := make(map[string]api.ResourceThresholds)
-	for nodeName, node := range nodes {
-		resourceThresholds[nodeName] = resourceUsagePercentages(nodeUsage[nodeName], node, false)
-	}
-	return resourceThresholds
 }
 
 type classifierFnc func(nodeName string, value, threshold api.ResourceThresholds) bool
@@ -522,4 +424,76 @@ func classifyPods(pods []*v1.Pod, filter func(pod *v1.Pod) bool) ([]*v1.Pod, []*
 	}
 
 	return nonRemovablePods, removablePods
+}
+
+// AssessNodesUsagesAndThresholds converts the raw usage data into percentage.
+// In case we need to calculate deviations from the average this function does
+// so as well. Thresholds are provided in percentage but they slightly differ
+// in behavior: if no deviation is enabled they are interpreted as is but with
+// deviations enabled they are considered deviations from the node's average.
+// Returns the usage (pct) and the thresholds (pct) for each node.
+func AssessNodesUsagesAndThresholds(
+	rawUsages, rawCapacities map[string]api.ReferencedResourceList,
+	lowSpan, highSpan api.ResourceThresholds,
+	calculateDeviation bool,
+) (map[string]api.ResourceThresholds, map[string][]api.ResourceThresholds) {
+	// first we normalize the node usage from the raw data (Mi, Gi, etc)
+	// into api.Percentage values.
+	usage := normalizer.Normalize(
+		rawUsages, rawCapacities, ResourceUsageNormalizer,
+	)
+
+	// if we are not taking the average and applying deviations to it we
+	// can simply replicate the same threshold across all nodes and return.
+	if !calculateDeviation {
+		thresholds := normalizer.Replicate(
+			slices.Collect(maps.Keys(rawUsages)),
+			[]api.ResourceThresholds{lowSpan, highSpan},
+		)
+		return usage, thresholds
+	}
+
+	// calculate the average usage and then deviate it according to the
+	// user provided thresholds. We also ensure that the value after the
+	// deviation is at least 1%. this call also replicates the thresholds
+	// across all nodes.
+	thresholds := normalizer.Replicate(
+		slices.Collect(maps.Keys(rawUsages)),
+		normalizer.Min(
+			normalizer.Deviate(
+				normalizer.Average(usage),
+				[]api.ResourceThresholds{
+					lowSpan.Negative(),
+					highSpan,
+				},
+			),
+			1,
+		),
+	)
+
+	return usage, thresholds
+}
+
+// ResourceUsageNormalizer is an implementation of a Normalizer that converts a
+// set of resource usages and totals into percentage. This function operates on
+// Quantity Value() for all the resources except CPU, where it uses
+// MilliValue().
+func ResourceUsageNormalizer(usages, totals api.ReferencedResourceList) api.ResourceThresholds {
+	result := api.ResourceThresholds{}
+	for rname, value := range usages {
+		total, ok := totals[rname]
+		if !ok || value == nil || total == nil {
+			continue
+		}
+
+		used, avail := value.Value(), total.Value()
+		if rname == v1.ResourceCPU {
+			used, avail = value.MilliValue(), total.MilliValue()
+		}
+
+		// ensures that the percentage is between 0 and 100.
+		pct := math.Max(math.Min(float64(used)/float64(avail)*100, 100), 0)
+		result[rname] = api.Percentage(pct)
+	}
+	return result
 }

@@ -123,17 +123,18 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 	}
 
 	nodesMap, nodesUsageMap, podListMap := getNodeUsageSnapshot(nodes, l.usageClient)
-	var nodeThresholdsMap map[string][]api.ResourceThresholds
-	if l.args.UseDeviationThresholds {
-		nodeThresholdsMap = getNodeThresholdsFromAverageNodeUsage(nodes, l.usageClient, l.args.Thresholds, l.args.TargetThresholds)
-	} else {
-		nodeThresholdsMap = getStaticNodeThresholds(nodes, l.args.Thresholds, l.args.TargetThresholds)
-	}
-	nodesUsageAsNodeThresholdsMap := nodeUsageToResourceThresholds(nodesUsageMap, nodesMap)
+
+	usage, thresholds := AssessNodesUsagesAndThresholds(
+		nodesUsageMap,
+		api.ReferencedResourceListForNodesCapacity(nodes),
+		l.args.Thresholds,
+		l.args.TargetThresholds,
+		l.args.UseDeviationThresholds,
+	)
 
 	nodeGroups := classifyNodeUsage(
-		nodesUsageAsNodeThresholdsMap,
-		nodeThresholdsMap,
+		usage,
+		thresholds,
 		[]classifierFnc{
 			// underutilization
 			func(nodeName string, usage, threshold api.ResourceThresholds) bool {
@@ -156,7 +157,12 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 	listedNodes := map[string]struct{}{}
 	for i := range nodeGroups {
 		for nodeName := range nodeGroups[i] {
-			klog.InfoS("Node is "+category[i], "node", klog.KObj(nodesMap[nodeName]), "usage", nodesUsageMap[nodeName], "usagePercentage", resourceUsagePercentages(nodesUsageMap[nodeName], nodesMap[nodeName], true))
+			klog.InfoS(
+				fmt.Sprintf("Node is %x", category[i]),
+				"node", klog.KObj(nodesMap[nodeName]),
+				"usage", nodesUsageMap[nodeName],
+				"usagePercentage", usage[nodeName].Round(),
+			)
 			listedNodes[nodeName] = struct{}{}
 			nodeInfos[i] = append(nodeInfos[i], NodeInfo{
 				NodeUsage: NodeUsage{
@@ -165,15 +171,20 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 					allPods: podListMap[nodeName],
 				},
 				thresholds: NodeThresholds{
-					lowResourceThreshold:  resourceThresholdsToNodeUsage(nodeThresholdsMap[nodeName][0], nodesMap[nodeName]),
-					highResourceThreshold: resourceThresholdsToNodeUsage(nodeThresholdsMap[nodeName][1], nodesMap[nodeName]),
+					lowResourceThreshold:  resourceThresholdsToNodeUsage(thresholds[nodeName][0], nodesMap[nodeName]),
+					highResourceThreshold: resourceThresholdsToNodeUsage(thresholds[nodeName][1], nodesMap[nodeName]),
 				},
 			})
 		}
 	}
 	for nodeName := range nodesMap {
 		if _, ok := listedNodes[nodeName]; !ok {
-			klog.InfoS("Node is appropriately utilized", "node", klog.KObj(nodesMap[nodeName]), "usage", nodesUsageMap[nodeName], "usagePercentage", resourceUsagePercentages(nodesUsageMap[nodeName], nodesMap[nodeName], true))
+			klog.InfoS(
+				"Node is appropriately utilized",
+				"node", klog.KObj(nodesMap[nodeName]),
+				"usage", nodesUsageMap[nodeName],
+				"usagePercentage", usage[nodeName].Round(),
+			)
 		}
 	}
 
