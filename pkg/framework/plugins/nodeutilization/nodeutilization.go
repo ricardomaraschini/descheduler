@@ -32,25 +32,31 @@ import (
 	"sigs.k8s.io/descheduler/pkg/descheduler/evictions"
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
-	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/normalizer"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/classifier"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 	"sigs.k8s.io/descheduler/pkg/utils"
 )
 
-// []NodeUsage is a snapshot, so allPods can not be read any time to avoid breaking consistency between the node's actual usage and available pods
+// []NodeUsage is a snapshot, so allPods can not be read any time to avoid
+// breaking consistency between the node's actual usage and available pods
 //
 // New data model:
 // - node usage: map[string]api.ReferencedResourceList
 // - thresholds: map[string]api.ReferencedResourceList
 // - all pods:   map[string][]*v1.Pod
 // After classification:
-// - each group will have its own (smaller) node usage and thresholds and allPods
-// Both node usage and thresholds are needed to compute the remaining resources that can be evicted/can accepted evicted pods
+// - each group will have its own (smaller) node usage and thresholds and
+//   allPods
+// Both node usage and thresholds are needed to compute the remaining resources
+// that can be evicted/can accepted evicted pods
 //
-// 1. translate node usages into percentages as float or int64 (how much precision is lost?, maybe use BigInt?)
-// 2. produce thresholds (if they need to be computed, otherwise use user provided, they are already in percentages)
-// 3. classify nodes into groups
-// 4. produces a list of nodes (sorted as before) that have the node usage, the threshold (only one this time) and the snapshottted pod list present
+// 1. translate node usages into percentages as float or int64 (how much
+//    precision is lost?, maybe use BigInt?).
+// 2. produce thresholds (if they need to be computed, otherwise use user
+//    provided, they are already in percentages).
+// 3. classify nodes into groups.
+// 4. produces a list of nodes (sorted as before) that have the node usage, the
+//    threshold (only one this time) and the snapshottted pod list present.
 
 // Data wise
 // Produce separated maps for:
@@ -58,9 +64,11 @@ import (
 // - node usage: map[string]api.ReferencedResourceList
 // - thresholds: map[string][]api.ReferencedResourceList
 // - pod list: map[string][]*v1.Pod
-// Once the nodes are classified produce the original []NodeInfo so the code is not that much changed (postponing further refactoring once it is needed)
+// Once the nodes are classified produce the original []NodeInfo so the code is
+// not that much changed (postponing further refactoring once it is needed)
 
-// NodeUsage stores a node's info, pods on it, thresholds and its resource usage
+// NodeUsage stores a node's info, pods on it, thresholds and its resource
+// usage.
 type NodeUsage struct {
 	node    *v1.Node
 	usage   api.ReferencedResourceList
@@ -143,30 +151,6 @@ func resourceThresholdsToNodeUsage(resourceThresholds api.ResourceThresholds, no
 	}
 
 	return nodeUsage
-}
-
-type classifierFnc func(nodeName string, value, threshold api.ResourceThresholds) bool
-
-func classifyNodeUsage(
-	nodeUsageAsNodeThresholds map[string]api.ResourceThresholds,
-	nodeThresholdsMap map[string][]api.ResourceThresholds,
-	classifiers []classifierFnc,
-) []map[string]api.ResourceThresholds {
-	nodeGroups := make([]map[string]api.ResourceThresholds, len(classifiers))
-	for i := range len(classifiers) {
-		nodeGroups[i] = make(map[string]api.ResourceThresholds)
-	}
-
-	for nodeName, nodeUsage := range nodeUsageAsNodeThresholds {
-		for idx, classFnc := range classifiers {
-			if classFnc(nodeName, nodeUsage, nodeThresholdsMap[nodeName][idx]) {
-				nodeGroups[idx][nodeName] = nodeUsage
-				break
-			}
-		}
-	}
-
-	return nodeGroups
 }
 
 func usageToKeysAndValues(usage api.ReferencedResourceList) []interface{} {
@@ -439,14 +423,14 @@ func AssessNodesUsagesAndThresholds(
 ) (map[string]api.ResourceThresholds, map[string][]api.ResourceThresholds) {
 	// first we normalize the node usage from the raw data (Mi, Gi, etc)
 	// into api.Percentage values.
-	usage := normalizer.Normalize(
+	usage := classifier.Normalize(
 		rawUsages, rawCapacities, ResourceUsageNormalizer,
 	)
 
 	// if we are not taking the average and applying deviations to it we
 	// can simply replicate the same threshold across all nodes and return.
 	if !calculateDeviation {
-		thresholds := normalizer.Replicate(
+		thresholds := classifier.Replicate(
 			slices.Collect(maps.Keys(rawUsages)),
 			[]api.ResourceThresholds{lowSpan, highSpan},
 		)
@@ -457,11 +441,11 @@ func AssessNodesUsagesAndThresholds(
 	// user provided thresholds. We also ensure that the value after the
 	// deviation is at least 1%. this call also replicates the thresholds
 	// across all nodes.
-	thresholds := normalizer.Replicate(
+	thresholds := classifier.Replicate(
 		slices.Collect(maps.Keys(rawUsages)),
-		normalizer.Min(
-			normalizer.Deviate(
-				normalizer.Average(usage),
+		classifier.Min(
+			classifier.Deviate(
+				classifier.Average(usage),
 				[]api.ResourceThresholds{
 					lowSpan.Negative(),
 					highSpan,

@@ -28,6 +28,7 @@ import (
 	nodeutil "sigs.k8s.io/descheduler/pkg/descheduler/node"
 
 	podutil "sigs.k8s.io/descheduler/pkg/descheduler/pod"
+	"sigs.k8s.io/descheduler/pkg/framework/plugins/nodeutilization/classifier"
 	frameworktypes "sigs.k8s.io/descheduler/pkg/framework/types"
 )
 
@@ -93,6 +94,25 @@ func (h *HighNodeUtilization) Name() string {
 	return HighNodeUtilizationPluginName
 }
 
+func (h *HighNodeUtilization) IsNodeUnderutilized(nodes map[string]*v1.Node) classifier.Classifier[string, api.ResourceThresholds] {
+	return func(nodeName string, usage, threshold api.ResourceThresholds) bool {
+		if nodeutil.IsNodeUnschedulable(nodes[nodeName]) {
+			klog.V(2).InfoS(
+				"Node is unschedulable",
+				"node", klog.KObj(nodes[nodeName]),
+			)
+			return false
+		}
+		return true
+	}
+}
+
+func (h *HighNodeUtilization) IsNodeOverutilized() classifier.Classifier[string, api.ResourceThresholds] {
+	return func(_ string, usage, threshold api.ResourceThresholds) bool {
+		return isNodeAboveThreshold(usage, threshold)
+	}
+}
+
 // Balance extension point implementation for the plugin
 func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
 	if err := h.usageClient.sync(nodes); err != nil {
@@ -111,30 +131,31 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 		false,
 	)
 
-	nodeGroups := classifyNodeUsage(
+	nodeGroups := classifier.Classify(
 		usage,
 		thresholds,
-		[]classifierFnc{
-			// underutilized nodes
-			func(nodeName string, usage, threshold api.ResourceThresholds) bool {
-				return isNodeBelowThreshold(usage, threshold)
+		classifier.ForMapAll[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
+			func(usage, threshold api.Percentage) api.Percentage {
+				return usage - threshold
 			},
-			// every other node that is schedulable
-			func(nodeName string, usage, threshold api.ResourceThresholds) bool {
-				if nodeutil.IsNodeUnschedulable(nodesMap[nodeName]) {
-					klog.V(2).InfoS("Node is unschedulable", "node", klog.KObj(nodesMap[nodeName]))
-					return false
-				}
-				return true
+		),
+		classifier.Group(
+			func(nodeName string, _, _ api.ResourceThresholds) bool {
+				return !nodeutil.IsNodeUnschedulable(nodesMap[nodeName])
 			},
-		},
+			classifier.ForMapAll[string, v1.ResourceName, api.Percentage, api.ResourceThresholds](
+				func(usage, threshold api.Percentage) api.Percentage {
+					return usage - threshold
+				},
+			),
+		),
 	)
 
 	// convert groups node []NodeInfo
 	nodeInfos := make([][]NodeInfo, 2)
 	category := []string{"underutilized", "overutilized"}
-	for i := range nodeGroups {
-		for nodeName := range nodeGroups[i] {
+	for i, nodeGroup := range nodeGroups {
+		for nodeName := range nodeGroup {
 			klog.InfoS(
 				fmt.Sprintf("Node is %s", category[i]),
 				"node", klog.KObj(nodesMap[nodeName]),
