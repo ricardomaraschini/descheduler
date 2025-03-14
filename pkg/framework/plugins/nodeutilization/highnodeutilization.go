@@ -94,25 +94,6 @@ func (h *HighNodeUtilization) Name() string {
 	return HighNodeUtilizationPluginName
 }
 
-func (h *HighNodeUtilization) IsNodeUnderutilized(nodes map[string]*v1.Node) classifier.Classifier[string, api.ResourceThresholds] {
-	return func(nodeName string, usage, threshold api.ResourceThresholds) bool {
-		if nodeutil.IsNodeUnschedulable(nodes[nodeName]) {
-			klog.V(2).InfoS(
-				"Node is unschedulable",
-				"node", klog.KObj(nodes[nodeName]),
-			)
-			return false
-		}
-		return true
-	}
-}
-
-func (h *HighNodeUtilization) IsNodeOverutilized() classifier.Classifier[string, api.ResourceThresholds] {
-	return func(_ string, usage, threshold api.ResourceThresholds) bool {
-		return isNodeAboveThreshold(usage, threshold)
-	}
-}
-
 // Balance extension point implementation for the plugin
 func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
 	if err := h.usageClient.sync(nodes); err != nil {
@@ -139,7 +120,7 @@ func (h *HighNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fr
 				return usage - threshold
 			},
 		),
-		classifier.Group(
+		classifier.GroupAll(
 			func(nodeName string, _, _ api.ResourceThresholds) bool {
 				return !nodeutil.IsNodeUnschedulable(nodesMap[nodeName])
 			},

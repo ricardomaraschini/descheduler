@@ -115,19 +115,6 @@ func (l *LowNodeUtilization) Name() string {
 	return LowNodeUtilizationPluginName
 }
 
-func (l *LowNodeUtilization) IsNodeUnderutilized(nodes map[string]*v1.Node) classifier.Classifier[string, api.ResourceThresholds] {
-	return func(nodeName string, usage, threshold api.ResourceThresholds) bool {
-		if nodeutil.IsNodeUnschedulable(nodes[nodeName]) {
-			klog.V(2).InfoS(
-				"Node is unschedulable, thus not considered as underutilized",
-				"node", klog.KObj(nodes[nodeName]),
-			)
-			return false
-		}
-		return isNodeBelowThreshold(usage, threshold)
-	}
-}
-
 // Balance extension point implementation for the plugin
 func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *frameworktypes.Status {
 	if err := l.usageClient.sync(nodes); err != nil {
@@ -149,7 +136,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 	nodeGroups := classifier.Classify(
 		usage,
 		thresholds,
-		classifier.Group(
+		classifier.GroupAll(
 			func(nodeName string, _, _ api.ResourceThresholds) bool {
 				return !nodeutil.IsNodeUnschedulable(nodesMap[nodeName])
 			},
@@ -192,6 +179,7 @@ func (l *LowNodeUtilization) Balance(ctx context.Context, nodes []*v1.Node) *fra
 			})
 		}
 	}
+
 	for nodeName := range nodesMap {
 		if _, ok := listedNodes[nodeName]; !ok {
 			klog.InfoS(

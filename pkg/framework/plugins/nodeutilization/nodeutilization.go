@@ -365,28 +365,6 @@ func isNodeAboveTargetUtilization(usage NodeUsage, threshold api.ReferencedResou
 	return false
 }
 
-// isNodeAboveThreshold checks if a node is over a threshold
-// At least one resource has to be above the threshold
-func isNodeAboveThreshold(usage, threshold api.ResourceThresholds) bool {
-	for name, resourceValue := range usage {
-		if threshold[name] < resourceValue {
-			return true
-		}
-	}
-	return false
-}
-
-// isNodeBelowThreshold checks if a node is under a threshold
-// All resources have to be below the threshold
-func isNodeBelowThreshold(usage, threshold api.ResourceThresholds) bool {
-	for name, resourceValue := range usage {
-		if threshold[name] < resourceValue {
-			return false
-		}
-	}
-	return true
-}
-
 // getResourceNames returns list of resource names in resource thresholds
 func getResourceNames(thresholds api.ResourceThresholds) []v1.ResourceName {
 	resourceNames := make([]v1.ResourceName, 0, len(thresholds))

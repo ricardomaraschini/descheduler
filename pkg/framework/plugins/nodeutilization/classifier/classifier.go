@@ -62,12 +62,12 @@ func Classify[K comparable, V any](
 	return result
 }
 
-// ForMap is a function that returns a classifier that compares all values in a
-// map. The function receives a Comparer function that is used to compare all
-// the map values one at a time. The returned Classifier will return true only
-// if the provided Comparer function returns a value less than 0 for all the
-// values.
-func ForMap[K, I comparable, V any, M ~map[I]V, N Number](cmp Comparer[V, N]) Classifier[K, M] {
+// ForMapAll is a function that returns a classifier that compares all values
+// in a map. The function receives a Comparer function that is used to compare
+// all the map values one at a time. The returned Classifier will return true
+// only if the provided Comparer function returns a value less than 0 for all
+// the values.
+func ForMapAll[K, I comparable, V any, M ~map[I]V, N Number](cmp Comparer[V, N]) Classifier[K, M] {
 	return func(_ K, usages, limits M) bool {
 		for idx, usage := range usages {
 			if limit, ok := limits[idx]; ok {
@@ -78,12 +78,6 @@ func ForMap[K, I comparable, V any, M ~map[I]V, N Number](cmp Comparer[V, N]) Cl
 		}
 		return true
 	}
-}
-
-// ForMapAll is a helper function that returns a classifier that compares all values in a
-// map. This is an alias for ForMap().
-func ForMapAll[K, I comparable, V any, M ~map[I]V, N Number](cmp Comparer[V, N]) Classifier[K, M] {
-	return ForMap[K, I, V, M](cmp)
 }
 
 // ForMapAny is a function that returns a classifier that compares all values in a
@@ -103,9 +97,9 @@ func ForMapAny[K, I comparable, V any, M ~map[I]V, N Number](cmp Comparer[V, N])
 	}
 }
 
-// Group groups multiple classifiers into a single classifier. If any of the
+// GroupAll groups multiple classifiers into a single classifier. If any of the
 // classifiers return false, the group classifier will return false.
-func Group[K comparable, V any](classifiers ...Classifier[K, V]) Classifier[K, V] {
+func GroupAll[K comparable, V any](classifiers ...Classifier[K, V]) Classifier[K, V] {
 	return func(key K, usage, limit V) bool {
 		for _, classifier := range classifiers {
 			if !classifier(key, usage, limit) {
@@ -113,5 +107,18 @@ func Group[K comparable, V any](classifiers ...Classifier[K, V]) Classifier[K, V
 			}
 		}
 		return true
+	}
+}
+
+// GroupAny groups multiple classifiers into a single classifier. If any of the
+// classifiers return true, the group classifier will return true.
+func GroupAny[K comparable, V any](classifiers ...Classifier[K, V]) Classifier[K, V] {
+	return func(key K, usage, limit V) bool {
+		for _, classifier := range classifiers {
+			if classifier(key, usage, limit) {
+				return true
+			}
+		}
+		return false
 	}
 }
